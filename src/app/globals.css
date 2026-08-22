@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+:root {
+  /* Neutral scale — warm-ish gray, not pure black/white */
+  --color-paper: #fafaf9;
+  --color-surface: #ffffff;
+  --color-ink: #1c1917;
+  --color-ink-muted: #57534e;
+  --color-ink-faint: #a8a29e;
+  --color-border: #e7e5e4;
+  --color-border-strong: #d6d3d1;
+
+  /* Brand — a restrained ink-blue, used sparingly */
+  --color-brand: #24466b;
+  --color-brand-strong: #1a3552;
+  --color-brand-soft: #e8eef4;
+
+  /* Status colors — muted, not neon */
+  --color-success: #2f6f4f;
+  --color-success-soft: #e7f1eb;
+  --color-warning: #a3661b;
+  --color-warning-soft: #f6ecdc;
+  --color-danger: #a3342b;
+  --color-danger-soft: #f5e6e4;
+
+  --background: var(--color-paper);
+  --foreground: var(--color-ink);
+}
+
+@theme inline {
+  --color-paper: var(--color-paper);
+  --color-surface: var(--color-surface);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-ink-faint: var(--color-ink-faint);
+  --color-border: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
+
+  --color-brand: var(--color-brand);
+  --color-brand-strong: var(--color-brand-strong);
+  --color-brand-soft: var(--color-brand-soft);
+
+  --color-success: var(--color-success);
+  --color-success-soft: var(--color-success-soft);
+  --color-warning: var(--color-warning);
+  --color-warning-soft: var(--color-warning-soft);
+  --color-danger: var(--color-danger);
+  --color-danger-soft: var(--color-danger-soft);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Dark mode is not part of Phase 1A. Colors are intentionally light-only for now. */
