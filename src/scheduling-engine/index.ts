@@ -1,46 +1,38 @@
 /**
- * Public entry point for the scheduling engine. UI code should only import
- * from this file, never from internal modules added later — that keeps the
+ * Public entry point for the scheduling engine. UI code should only import from this file
+ * (or `./types` for shared input/output types), never from internal modules — that keeps the
  * implementation free to change without breaking callers.
  *
- * See ./README.md for the module's intended responsibilities and status.
- *
- * Nothing below is implemented yet. These signatures exist to (a) let the UI
- * layer be written against a stable contract now, and (b) document the shape
- * of Phase 1B work before it starts.
+ * See ./README.md for the module's responsibilities and Phase 2 status.
  */
-import type {
+export { generateSchedule, replan, scheduleTask, detectOverload } from "./scheduler";
+export { calculatePriority, calculateUrgency, explainPriority, isOverdue } from "./priority";
+export { calculateDailyCapacity } from "./capacity";
+export { findAvailableWindows } from "./availability";
+export { splitTask, sessionBounds, isSplittableWorkType } from "./splitting";
+
+export type {
   EstimateAccuracySample,
   GenerateScheduleInput,
   GenerateScheduleResult,
+  PriorityBreakdown,
   ReplanInput,
+  SchedulableWorkItem,
+  ScheduleWarning,
+  WorkAheadSuggestion,
 } from "./types";
-import type { ScheduleBlock } from "@/types/models";
+export type { TimeWindow } from "./availability";
+export type { DaySlot, PlannedChunk } from "./splitting";
+export type { DailyCapacityContext } from "./capacity";
+
+import type { EstimateAccuracySample } from "./types";
 
 /**
- * Build a schedule of blocks for the given date range from scratch.
- * Phase 1B: implement availability calculation + placement.
+ * Roll estimate-vs-actual samples into an updated estimated-minutes figure for future similar
+ * work items. Out of scope for Phase 2 (which only *records* estimate-vs-actual data — see
+ * `WorkSession.plannedMinutes`/`minutesSpent` in `types/models.ts`); this stays a stub until a
+ * later phase actually builds the learning heuristic.
  */
-export function generateSchedule(
-  _input: GenerateScheduleInput
-): GenerateScheduleResult {
-  throw new Error("generateSchedule: not implemented yet (Phase 1B)");
-}
-
-/**
- * Recompute affected blocks after a change, preserving unaffected ones.
- * Phase 1B/1C: implement incremental replanning.
- */
-export function replan(_input: ReplanInput): ScheduleBlock[] {
-  throw new Error("replan: not implemented yet (Phase 1B)");
-}
-
-/**
- * Roll estimate-vs-actual samples into an updated estimated-minutes figure
- * for future similar work items. Phase 1C: implement the learning heuristic.
- */
-export function refineEstimate(
-  _samples: EstimateAccuracySample[]
-): number {
-  throw new Error("refineEstimate: not implemented yet (Phase 1C)");
+export function refineEstimate(_samples: EstimateAccuracySample[]): number {
+  throw new Error("refineEstimate: not implemented yet (future phase)");
 }

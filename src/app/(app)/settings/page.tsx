@@ -1,8 +1,17 @@
+"use client";
+
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { useAppData } from "@/lib/data/store";
+import type { BreakPreference, FreeTimePriority, WorkStyle, WorkloadTolerance } from "@/types/models";
+
+const selectClassName =
+  "h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent";
 
 export default function SettingsPage() {
+  const { planningProfile, updatePlanningProfile } = useAppData();
+
   return (
     <div>
       <PageHeader title="Settings" description="Account and planning preferences." />
@@ -16,10 +25,7 @@ export default function SettingsPage() {
             <Input label="Email" type="email" placeholder="you@school.edu" disabled />
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium text-ink">Grade level</label>
-              <select
-                disabled
-                className="h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-ink-faint"
-              >
+              <select disabled className={selectClassName}>
                 <option>High school</option>
               </select>
             </div>
@@ -28,24 +34,74 @@ export default function SettingsPage() {
 
         <section className="rounded-lg border border-border bg-surface p-5">
           <h2 className="mb-1 text-sm font-semibold text-ink">Planning preferences</h2>
-          <p className="mb-4 text-xs text-ink-faint">
-            Placeholder — will drive the scheduling engine once it&apos;s built.
-          </p>
+          <p className="mb-4 text-xs text-ink-faint">Drives the scheduling engine — changes apply the next time a schedule is generated.</p>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input
-              label="Preferred session length (minutes)"
-              type="number"
-              placeholder="45"
-              disabled
-            />
-            <Input
-              label="Buffer days before due date"
-              type="number"
-              placeholder="1"
-              disabled
-            />
-            <Input label="Earliest work time" type="time" defaultValue="15:30" disabled />
-            <Input label="Latest work time" type="time" defaultValue="21:00" disabled />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-ink">Workload tolerance</label>
+              <select
+                className={selectClassName}
+                value={planningProfile.workloadTolerance}
+                onChange={(e) => updatePlanningProfile({ workloadTolerance: e.target.value as WorkloadTolerance })}
+              >
+                <option value="light">Light</option>
+                <option value="moderate">Moderate</option>
+                <option value="heavy">Heavy</option>
+                <option value="adaptive">Adaptive</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-ink">Break preference</label>
+              <select
+                className={selectClassName}
+                value={planningProfile.breakPreference}
+                onChange={(e) => updatePlanningProfile({ breakPreference: e.target.value as BreakPreference })}
+              >
+                <option value="frequent">Frequent</option>
+                <option value="balanced">Balanced</option>
+                <option value="minimal">Minimal</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-ink">Free-time priority</label>
+              <select
+                className={selectClassName}
+                value={planningProfile.freeTimePriority}
+                onChange={(e) => updatePlanningProfile({ freeTimePriority: e.target.value as FreeTimePriority })}
+              >
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-ink">Work style</label>
+              <select
+                className={selectClassName}
+                value={planningProfile.workStyle}
+                onChange={(e) => updatePlanningProfile({ workStyle: e.target.value as WorkStyle })}
+              >
+                <option value="early">Early — finish well before deadlines</option>
+                <option value="consistent">Consistent — spread evenly</option>
+                <option value="deadline_driven">Deadline-driven</option>
+                <option value="adaptive">Adaptive</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2 sm:col-span-2">
+              <input
+                id="autoBreaks"
+                type="checkbox"
+                checked={planningProfile.autoBreaks}
+                onChange={(e) => updatePlanningProfile({ autoBreaks: e.target.checked })}
+                className="h-4 w-4 rounded border-border-strong accent-brand"
+              />
+              <label htmlFor="autoBreaks" className="text-sm text-ink">
+                Automatically insert breaks between work sessions
+              </label>
+            </div>
           </div>
         </section>
 

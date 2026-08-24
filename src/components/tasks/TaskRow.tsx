@@ -10,6 +10,8 @@ export interface TaskRowProps {
   kindLabel: string;
   estimatedMinutes: number;
   className?: string;
+  /** When provided, renders a checkbox that toggles complete/incomplete. */
+  onToggleComplete?: () => void;
 }
 
 const statusTone: Record<WorkItemStatus, BadgeTone> = {
@@ -33,6 +35,7 @@ export function TaskRow({
   kindLabel,
   estimatedMinutes,
   className,
+  onToggleComplete,
 }: TaskRowProps) {
   return (
     <div
@@ -43,6 +46,15 @@ export function TaskRow({
     >
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex items-center gap-2">
+          {onToggleComplete && (
+            <input
+              type="checkbox"
+              checked={status === "completed"}
+              onChange={onToggleComplete}
+              aria-label={status === "completed" ? `Mark ${title} incomplete` : `Mark ${title} complete`}
+              className="h-4 w-4 shrink-0 rounded border-border-strong accent-brand"
+            />
+          )}
           <span className={cn("truncate text-sm font-medium text-ink", status === "completed" && "line-through text-ink-muted")}>
             {title}
           </span>

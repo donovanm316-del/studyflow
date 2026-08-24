@@ -1,6 +1,6 @@
 /**
  * Types used only by the scheduling engine's internal contracts (inputs and
- * outputs of its future functions). Shared domain models (Assignment, Test,
+ * outputs of its functions). Shared domain models (Assignment, Test,
  * ScheduleBlock, etc.) live in `src/types/models.ts` and are imported here,
  * not duplicated.
  */
@@ -20,29 +20,62 @@ export type SchedulableWorkItem = Assignment | Test | Quiz | Project;
 /** Input bundle for generating a schedule over a date range. */
 export interface GenerateScheduleInput {
   userId: string;
-  rangeStart: string; // ISO date
-  rangeEnd: string; // ISO date
+  rangeStart: string; // ISO date ("YYYY-MM-DD")
+  rangeEnd: string; // ISO date ("YYYY-MM-DD")
+  /** Current moment, as an ISO date-time — injected rather than read from the clock, so runs are deterministic. */
+  now: string;
   workItems: SchedulableWorkItem[];
   commitments: Commitment[];
   planningProfile: PlanningProfile;
-  /** Existing blocks the engine should try to preserve where possible (e.g. manual overrides). */
+  /**
+   * Blocks the engine must not move or overwrite: manual overrides, and anything already
+   * completed or skipped. Blocks in this list occupy time the same way commitments do.
+   */
   existingBlocks?: ScheduleBlock[];
+}
+
+/** One factor breakdown behind a single work item's priority score (Part 3 / Part 15). */
+export interface PriorityBreakdown {
+  workItemId: string;
+  score: number;
+  factors: {
+    weight: number;
+    urgency: number;
+    strictness: number;
+    workload: number;
+    type: number;
+    overdue: number;
+  };
+}
+
+export interface ScheduleWarning {
+  kind: "overloaded-range" | "unscheduled-hard-deadline";
+  message: string;
+  workItemIds: string[];
+}
+
+/** An optional, never-auto-scheduled suggestion for using slack time productively (Part 11). */
+export interface WorkAheadSuggestion {
+  workItemId: string;
+  title: string;
+  reason: string;
 }
 
 export interface GenerateScheduleResult {
   blocks: ScheduleBlock[];
   /** Work items the engine could not fully schedule before their due date, given constraints. */
   unscheduledWorkItemIds: string[];
+  /** Priority breakdowns for every work item considered, keyed by work item id (Part 15). */
+  priorities: Record<string, PriorityBreakdown>;
+  warnings: ScheduleWarning[];
+  /** True when there's no overdue work and everything upcoming is adequately planned (Part 11). */
+  caughtUp: boolean;
+  workAheadSuggestions: WorkAheadSuggestion[];
 }
 
 /** Input for recomputing a plan after something changes (missed session, new item, moved due date). */
-export interface ReplanInput {
-  userId: string;
+export interface ReplanInput extends GenerateScheduleInput {
   reason: "missed-session" | "new-work-item" | "due-date-changed" | "manual-edit";
-  currentBlocks: ScheduleBlock[];
-  workItems: SchedulableWorkItem[];
-  commitments: Commitment[];
-  planningProfile: PlanningProfile;
 }
 
 /** A single estimate-vs-actual data point, used for both learning and insight reporting. */

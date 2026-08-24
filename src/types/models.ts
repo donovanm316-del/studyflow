@@ -39,9 +39,46 @@ interface WorkItemBase {
   notes?: string;
   createdAt: string;
   updatedAt: string;
+
+  /** How much this item counts toward the student's grade/importance. Feeds priority scoring. */
+  weight: AssignmentWeight;
+  /** How firm the due date is. Hard deadlines dominate priority; targets are student-set goals. */
+  deadlineStrictness: DeadlineStrictness;
+  /** Finer-grained category than `kind` — used to decide splittability and session shape. */
+  workType: WorkType;
+  /** Rigor of the course this work belongs to. Influences workload capacity, never invents work. */
+  rigor?: CourseRigor;
+  /**
+   * Whether this item can be split across multiple work sessions. Defaults by workType when
+   * omitted (see `isSplittableWorkType` in the scheduling engine) — projects/essays/long-term
+   * work default to splittable, single-sitting homework does not.
+   */
+  splittable?: boolean;
 }
 
 export type WorkItemStatus = "not-started" | "in-progress" | "completed";
+
+export type AssignmentWeight = "low" | "medium" | "high";
+
+export type DeadlineStrictness = "hard" | "important" | "flexible" | "target";
+
+export type WorkType =
+  | "homework"
+  | "reading"
+  | "study-session"
+  | "test-prep"
+  | "quiz-prep"
+  | "project"
+  | "essay"
+  | "long-term";
+
+export type CourseRigor =
+  | "grade_level"
+  | "honors"
+  | "ap"
+  | "ib"
+  | "college_level"
+  | "advanced";
 
 /** A generic assignment (homework, reading, worksheets, etc). */
 export interface Assignment extends WorkItemBase {
@@ -92,20 +129,29 @@ export type CommitmentRecurrence =
 
 /**
  * A block of time the scheduling engine has assigned to a piece of work.
- * This is the engine's output — the UI renders these, it does not create them directly.
+ * This is the engine's output — the UI renders these, it does not create them directly
+ * (except for manual overrides, which the UI creates and the engine then treats as fixed).
  */
 export interface ScheduleBlock {
   id: string;
   userId: string;
-  /** The work item this block is time allocated to, if any (blocks can also represent commitments). */
+  /** The work item this block is time allocated to, if any (blocks can also represent commitments or breaks). */
   workItemId?: string;
   workItemKind?: "assignment" | "test" | "quiz" | "project";
   title: string;
   start: string; // ISO date-time
   end: string; // ISO date-time
-  /** Whether this block was placed by the engine or manually adjusted by the student. */
-  origin: "generated" | "manual-override";
+  /**
+   * Whether this block was placed by the engine, is a rest break, was manually adjusted by the
+   * student, or is a materialized occurrence of a fixed `Commitment` (regenerated for display on
+   * every call, not persisted separately — the `Commitment` itself is the source of truth).
+   */
+  origin: "generated" | "manual-override" | "break" | "commitment";
   status: "planned" | "completed" | "skipped";
+  /** The priority score behind this placement, when it represents work (not a break/commitment). */
+  priorityScore?: number;
+  /** Human-readable explanation of why this block was scheduled here — see `explainPriority`. */
+  reason?: string;
 }
 
 /** A logged record of time actually spent working, used to compare estimate vs. actual. */
@@ -116,12 +162,30 @@ export interface WorkSession {
   scheduleBlockId?: string;
   start: string; // ISO date-time
   end?: string; // ISO date-time, absent while a session is in progress
+  /** How long the engine planned this session to be, for estimate-vs-actual comparison. */
+  plannedMinutes?: number;
   minutesSpent?: number;
+  /** True if the student postponed/skipped the originally planned session rather than completing it. */
+  postponed?: boolean;
+}
+
+/**
+ * Lightweight, explicit feedback a student gives on a generated schedule. Used only to inform
+ * future personalization by hand — this is not fed into any learning or ML system in Phase 2.
+ */
+export interface ScheduleFeedback {
+  id: string;
+  userId: string;
+  /** ISO date the feedback applies to (the day, or the first day of the week, being rated). */
+  dateRange: { start: string; end: string };
+  workloadFeeling: "too-light" | "just-right" | "too-heavy";
+  breaksFeeling?: "too-few" | "just-right" | "too-many";
+  createdAt: string;
 }
 
 /**
  * Per-student preferences that steer how the scheduling engine builds a plan.
- * None of these are surfaced with real controls yet — Settings only sketches the shape.
+ * Settings exposes real controls for these as of Phase 2.
  */
 export interface PlanningProfile {
   userId: string;
@@ -137,4 +201,18 @@ export interface PlanningProfile {
   bufferDays: number;
   /** Whether the student wants breaks inserted automatically between sessions. */
   autoBreaks: boolean;
+
+  /** How much daily workload the student is comfortable with. See scheduling-engine/constants.ts. */
+  workloadTolerance: WorkloadTolerance;
+  /** How often the student wants breaks, which shapes session length bounds. */
+  breakPreference: BreakPreference;
+  /** How aggressively the scheduler should protect unallocated/free time. */
+  freeTimePriority: FreeTimePriority;
+  /** Whether the student prefers to finish early, spread work evenly, or work closer to deadlines. */
+  workStyle: WorkStyle;
 }
+
+export type WorkloadTolerance = "light" | "moderate" | "heavy" | "adaptive";
+export type BreakPreference = "frequent" | "balanced" | "minimal";
+export type FreeTimePriority = "high" | "medium" | "low";
+export type WorkStyle = "early" | "consistent" | "deadline_driven" | "adaptive";
