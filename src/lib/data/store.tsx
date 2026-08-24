@@ -31,14 +31,36 @@ interface AppState {
   feedback: ScheduleFeedback[];
 }
 
-function initialState(): AppState {
-  const seed = createSeedData(todayDateOnly());
-  return { ...seed, fixedBlocks: [], workSessions: [], feedback: [] };
-}
+/**
+ * A static, date-free starting point — used for both server rendering and the client's very
+ * first (pre-mount) render. It has to be identical on both sides or React throws a hydration
+ * mismatch. The seed data (and any saved localStorage data) is date-dependent, so it can only be
+ * loaded after mount — see the effect below.
+ */
+const EMPTY_STATE: AppState = {
+  workItems: [],
+  commitments: [],
+  planningProfile: {
+    userId: DEMO_USER_ID,
+    dailyAvailability: [],
+    preferredSessionMinutes: 45,
+    bufferDays: 1,
+    autoBreaks: true,
+    workloadTolerance: "moderate",
+    breakPreference: "balanced",
+    freeTimePriority: "medium",
+    workStyle: "early",
+  },
+  fixedBlocks: [],
+  workSessions: [],
+  feedback: [],
+};
 
 export type NewWorkItemInput = Omit<SchedulableWorkItem, "id" | "userId" | "status" | "createdAt" | "updatedAt">;
 
 interface AppDataContextValue extends AppState {
+  /** False until client-side data (saved or freshly seeded) has replaced the placeholder empty state. */
+  hydrated: boolean;
   addWorkItem: (input: NewWorkItemInput) => void;
   markWorkItemComplete: (id: string) => void;
   markWorkItemIncomplete: (id: string) => void;
@@ -60,21 +82,27 @@ function newId(prefix: string): string {
 }
 
 export function AppDataProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AppState>(initialState);
+  const [state, setState] = useState<AppState>(EMPTY_STATE);
   const [hydrated, setHydrated] = useState(false);
 
-  // Load any previously saved state after mount. This has to run client-side (localStorage
-  // doesn't exist during server rendering), and it has to run once after mount rather than in
-  // the initial useState — reading localStorage in the initializer would make the client's first
-  // render disagree with the server-rendered HTML and trigger a hydration mismatch instead.
+  // Load saved state (or seed fresh data, for a first-ever visit) after mount. This has to run
+  // client-side — localStorage doesn't exist during server rendering, and seeding uses today's
+  // real date, which would disagree with whatever date a statically-built server render happened
+  // to freeze in and trigger a hydration mismatch if it ran any earlier than the initial render.
   useEffect(() => {
+    let next: AppState | null = null;
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time load from an external store, not a derived-state loop
-      if (raw) setState(JSON.parse(raw) as AppState);
+      if (raw) next = JSON.parse(raw) as AppState;
     } catch {
-      // Corrupt or inaccessible storage — fall back to the seeded state already in place.
+      // Corrupt or inaccessible storage — fall through to seeding fresh data below.
     }
+    if (!next) {
+      const seed = createSeedData(todayDateOnly());
+      next = { ...seed, fixedBlocks: [], workSessions: [], feedback: [] };
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time load from an external store, not a derived-state loop
+    setState(next);
     setHydrated(true);
   }, []);
 
@@ -211,6 +239,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppDataContextValue>(
     () => ({
       ...state,
+      hydrated,
       addWorkItem,
       markWorkItemComplete,
       markWorkItemIncomplete,
@@ -222,7 +251,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       updatePlanningProfile,
       submitFeedback,
     }),
-    [state, addWorkItem, markWorkItemComplete, markWorkItemIncomplete, completeBlock, skipBlock, moveBlock, regenerateFrom, addCommitment, updatePlanningProfile, submitFeedback]
+    [state, hydrated, addWorkItem, markWorkItemComplete, markWorkItemIncomplete, completeBlock, skipBlock, moveBlock, regenerateFrom, addCommitment, updatePlanningProfile, submitFeedback]
   );
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
