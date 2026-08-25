@@ -1,4 +1,4 @@
-import type { Assignment, Commitment, PlanningProfile, Project, Test as TestItem } from "@/types/models";
+import type { Assignment, Commitment, PlanningProfile, Project, ScheduleFeedback, Test as TestItem } from "@/types/models";
 
 export const NOW = "2026-08-24T08:00:00"; // a Monday
 
@@ -93,6 +93,21 @@ export function makeCommitment(overrides: Partial<Commitment> = {}): Commitment 
     recurrence: { type: "weekly", daysOfWeek: [1, 3] },
     startTime: "16:00",
     endTime: "17:30",
+    ...overrides,
+  };
+}
+
+export function makeFeedback(
+  workloadFeeling: ScheduleFeedback["workloadFeeling"],
+  createdAt: string,
+  overrides: Partial<ScheduleFeedback> = {}
+): ScheduleFeedback {
+  return {
+    id: nextId("fb"),
+    userId: "u1",
+    dateRange: { start: "2026-08-17", end: "2026-08-23" },
+    workloadFeeling,
+    createdAt,
     ...overrides,
   };
 }

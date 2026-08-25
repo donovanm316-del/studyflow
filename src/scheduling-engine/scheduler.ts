@@ -13,7 +13,7 @@
  * produce the same output.
  */
 import { BREAK_LENGTH_MINUTES, MIN_CHUNK_MINUTES, URGENT_PROTECTION_HORIZON_DAYS, WORK_AHEAD_HORIZON_DAYS } from "./constants";
-import { calculateDailyCapacity } from "./capacity";
+import { calculateDailyCapacity, calculateFeedbackAdjustment } from "./capacity";
 import { findAvailableWindows, subtractIntervals, type TimeWindow } from "./availability";
 import { calculatePriority, explainPriority } from "./priority";
 import { isSplittableWorkType, sessionBounds, splitTask, type DaySlot, type PlannedChunk } from "./splitting";
@@ -72,7 +72,8 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     .map((item) => item.rigor)
     .filter((r): r is CourseRigor => !!r);
 
-  const capacityContext = { relevantRigors, isBehind };
+  const feedbackAdjustment = calculateFeedbackAdjustment(input.feedback ?? []);
+  const capacityContext = { relevantRigors, isBehind, feedbackAdjustment };
   const dailyCapacityMinutes = calculateDailyCapacity(planningProfile, capacityContext);
   const dates = dateRange(rangeStart, rangeEnd);
 
@@ -195,7 +196,7 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     a.start < b.start ? -1 : a.start > b.start ? 1 : 0
   );
 
-  return { blocks, unscheduledWorkItemIds, priorities, warnings, caughtUp, workAheadSuggestions };
+  return { blocks, unscheduledWorkItemIds, priorities, warnings, caughtUp, workAheadSuggestions, feedbackAdjustment };
 }
 
 interface ScheduleTaskContext {

@@ -26,23 +26,28 @@ engine:
 | `constants.ts` | Every tunable number (priority weights, capacity baselines, session-length bounds), documented in place |
 | `date-utils.ts` | Local-time date/time-of-day helpers (no timezone conversion) |
 | `priority.ts` | `calculatePriority`, `calculateUrgency`, `explainPriority` — the scoring system in Part 3/15 of the Phase 2 spec |
-| `capacity.ts` | `calculateDailyCapacity` — soft daily workload target, not a hard cap |
+| `capacity.ts` | `calculateDailyCapacity` — soft daily workload target, not a hard cap; `calculateFeedbackAdjustment` — bounded nudge from recent schedule feedback |
 | `availability.ts` | `findAvailableWindows` — free time windows from Planning Profile minus commitments minus existing blocks |
 | `splitting.ts` | `splitTask` — carves remaining minutes into session-length chunks across day slots |
 | `scheduler.ts` | `generateSchedule`, `scheduleTask`, `detectOverload`, `replan` — orchestrates everything above |
 | `index.ts` | The only module the UI should import from |
 
-## Current status (Phase 2)
+## Current status (Phase 2 + 2.5)
 
-Implemented: priority scoring with a documented, adjustable weight system; availability from
-`PlanningProfile` + `Commitment`s; a daily soft-capacity target driven by workload tolerance,
-course rigor, free-time priority, and whether the student is behind; task splitting across
-multiple sessions bounded by break preference; work-style-aware placement order (`early` fills
-the soonest days, `deadline_driven` fills days closest to the due date first, `consistent`
-spreads chunks evenly); best-effort break insertion; caught-up detection with optional
-work-ahead suggestions (never auto-scheduled); overload detection with a human-readable warning
-and a list of movable (flexible/target) work; deterministic block ids (derived from inputs, not
-a counter or `Math.random`).
+Implemented: priority scoring with a documented, adjustable weight system; a two-tier placement
+order that protects near-deadline items (`URGENT_PROTECTION_HORIZON_DAYS`) from being crowded
+out by higher-scoring-but-less-urgent work; availability from `PlanningProfile` + `Commitment`s;
+a daily soft-capacity target driven by workload tolerance, course rigor, free-time priority,
+whether the student is behind, and a bounded, deterministic adjustment from recent schedule
+feedback (`calculateFeedbackAdjustment` — Phase 2.5 Part 11; no ML, just "two unanimous responses
+in a row nudge the target, anything else is neutral"); task splitting across multiple sessions
+bounded by break preference, with breaks reserved both between an item's own consecutive
+sessions and between different items sharing a window; work-style-aware placement order (`early`
+fills the soonest days, `deadline_driven` fills days closest to the due date first, `consistent`
+spreads chunks evenly); caught-up detection with optional work-ahead suggestions (never
+auto-scheduled); overload detection with a human-readable warning and a list of movable
+(flexible/target) work; deterministic block ids (derived from inputs, not a counter or
+`Math.random`).
 
 Deliberately still a stub: `refineEstimate` (estimate-learning from historical accuracy) — the
 engine only *records* the estimate-vs-actual data (`WorkSession.plannedMinutes`/`minutesSpent`)

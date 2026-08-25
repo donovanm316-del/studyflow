@@ -70,6 +70,13 @@ export default function SchedulePage() {
           ))}
         </div>
       )}
+      {result.feedbackAdjustment !== 1 && (
+        <p className="mb-4 text-xs text-ink-faint">
+          {result.feedbackAdjustment < 1
+            ? "Based on your recent feedback, this schedule is planned slightly lighter than usual."
+            : "Based on your recent feedback, this schedule is planned slightly more ambitious than usual."}
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         {days.map((d) => (

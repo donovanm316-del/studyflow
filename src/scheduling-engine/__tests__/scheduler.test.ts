@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { generateSchedule } from "../scheduler";
 import { minutesOfDay, toDateOnly } from "../date-utils";
 import type { ScheduleBlock } from "@/types/models";
-import { makeAssignment, makeCommitment, makePlanningProfile, makeProject, makeTest, NOW } from "./fixtures";
+import { makeAssignment, makeCommitment, makeFeedback, makePlanningProfile, makeProject, makeTest, NOW } from "./fixtures";
 
 function workBlocks(blocks: ScheduleBlock[]): ScheduleBlock[] {
   return blocks.filter((b) => b.origin === "generated");
@@ -416,5 +416,271 @@ describe("generateSchedule — edge cases", () => {
 
     expect(result.unscheduledWorkItemIds).not.toContain(item.id);
     expect(workBlocks(result.blocks).some((b) => b.workItemId === item.id)).toBe(false);
+  });
+});
+
+describe("generateSchedule — deadline strictness actually affects outcomes", () => {
+  it("keeps a hard-deadline item scheduled ahead of a same-priority flexible one when capacity is too tight for both", () => {
+    // Identical in every way except strictness. There's only enough capacity for one of them.
+    const hard = makeAssignment({
+      title: "Hard",
+      dueDate: "2026-08-24T23:59:00",
+      estimatedMinutes: 120,
+      weight: "medium",
+      deadlineStrictness: "hard",
+    });
+    const flexible = makeAssignment({
+      title: "Flexible",
+      dueDate: "2026-08-24T23:59:00",
+      estimatedMinutes: 120,
+      weight: "medium",
+      deadlineStrictness: "flexible",
+    });
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [hard, flexible],
+      commitments: [],
+      // Moderate capacity (135 min) comfortably fits the 120-min hard item but leaves only 15
+      // min for the flexible one — enough to prove one wins and the other doesn't, without also
+      // starving the hard item itself (which "light" tolerance's 75 min would have done).
+      planningProfile: makePlanningProfile({ workloadTolerance: "moderate" }),
+    });
+
+    expect(result.unscheduledWorkItemIds).not.toContain(hard.id);
+    expect(result.unscheduledWorkItemIds).toContain(flexible.id);
+    // A dropped flexible item should never trigger the hard-deadline warning — it's allowed to slip.
+    expect(result.warnings.find((w) => w.kind === "unscheduled-hard-deadline")?.workItemIds ?? []).not.toContain(
+      flexible.id
+    );
+  });
+
+  it("treats a 'target' deadline as movable, the same as flexible, under tight capacity", () => {
+    const hard = makeAssignment({
+      title: "Hard",
+      dueDate: "2026-08-24T23:59:00",
+      estimatedMinutes: 120,
+      deadlineStrictness: "hard",
+    });
+    const target = makeAssignment({
+      title: "Target",
+      dueDate: "2026-08-24T23:59:00",
+      estimatedMinutes: 120,
+      deadlineStrictness: "target",
+    });
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [hard, target],
+      commitments: [],
+      planningProfile: makePlanningProfile({ workloadTolerance: "moderate" }),
+    });
+
+    expect(result.unscheduledWorkItemIds).not.toContain(hard.id);
+    expect(result.unscheduledWorkItemIds).toContain(target.id);
+  });
+});
+
+describe("generateSchedule — feedback adjustment (Phase 2.5)", () => {
+  it("plans a lighter schedule after two consecutive 'too-heavy' responses", () => {
+    const item = makeAssignment({ estimatedMinutes: 500, dueDate: "2026-08-26T23:59:00", deadlineStrictness: "flexible" });
+    const baseInput = {
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-26",
+      now: NOW,
+      workItems: [{ ...item }],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    };
+
+    const neutral = generateSchedule(baseInput);
+    const afterHeavyFeedback = generateSchedule({
+      ...baseInput,
+      workItems: [{ ...item }],
+      feedback: [makeFeedback("too-heavy", "2026-08-10T00:00:00.000Z"), makeFeedback("too-heavy", "2026-08-17T00:00:00.000Z")],
+    });
+
+    expect(afterHeavyFeedback.feedbackAdjustment).toBeLessThan(1);
+    expect(totalMinutes(workBlocks(afterHeavyFeedback.blocks))).toBeLessThan(totalMinutes(workBlocks(neutral.blocks)));
+  });
+
+  it("plans a more ambitious schedule after two consecutive 'too-light' responses", () => {
+    const item = makeAssignment({ estimatedMinutes: 500, dueDate: "2026-08-26T23:59:00", deadlineStrictness: "flexible" });
+    const baseInput = {
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-26",
+      now: NOW,
+      workItems: [{ ...item }],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    };
+
+    const neutral = generateSchedule(baseInput);
+    const afterLightFeedback = generateSchedule({
+      ...baseInput,
+      workItems: [{ ...item }],
+      feedback: [makeFeedback("too-light", "2026-08-10T00:00:00.000Z"), makeFeedback("too-light", "2026-08-17T00:00:00.000Z")],
+    });
+
+    expect(afterLightFeedback.feedbackAdjustment).toBeGreaterThan(1);
+    expect(totalMinutes(workBlocks(afterLightFeedback.blocks))).toBeGreaterThan(totalMinutes(workBlocks(neutral.blocks)));
+  });
+
+  it("does not adjust for a single response or a mixed streak", () => {
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+      feedback: [makeFeedback("too-heavy", "2026-08-17T00:00:00.000Z")],
+    });
+    expect(result.feedbackAdjustment).toBe(1);
+  });
+});
+
+describe("generateSchedule — additional edge cases", () => {
+  it("handles dozens of assignments deterministically and without overlaps", () => {
+    const items = Array.from({ length: 30 }, (_, i) =>
+      makeAssignment({
+        title: `Item ${i}`,
+        dueDate: `2026-08-${24 + (i % 6)}T23:59:00`,
+        estimatedMinutes: 15 + (i % 5) * 10,
+        weight: i % 3 === 0 ? "high" : i % 3 === 1 ? "medium" : "low",
+        deadlineStrictness: i % 2 === 0 ? "hard" : "flexible",
+      })
+    );
+
+    const input = {
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-30",
+      now: NOW,
+      workItems: items,
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    };
+
+    const first = generateSchedule(input);
+    const second = generateSchedule(input);
+
+    expect(first.blocks).toEqual(second.blocks); // deterministic — same input, same output
+    assertNoOverlaps(first.blocks);
+  });
+
+  it("handles a day with only 15 minutes of available time without crashing or overlapping", () => {
+    const profile = makePlanningProfile({
+      dailyAvailability: [{ dayOfWeek: 1, earliest: "15:00", latest: "15:15" }],
+    });
+    const item = makeAssignment({ dueDate: "2026-08-24T23:59:00", estimatedMinutes: 10, deadlineStrictness: "hard" });
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: profile,
+    });
+
+    assertNoOverlaps(result.blocks);
+    for (const block of workBlocks(result.blocks)) {
+      expect(minutesOfDay(block.start.split("T")[1])).toBeGreaterThanOrEqual(15 * 60);
+      expect(minutesOfDay(block.end.split("T")[1])).toBeLessThanOrEqual(15 * 60 + 15);
+    }
+  });
+
+  it("adapts around a commitment that consumes most of the day, leaving only a small gap", () => {
+    const commitment = makeCommitment({
+      recurrence: { type: "weekly", daysOfWeek: [1] },
+      startTime: "15:00",
+      endTime: "20:45", // leaves only 15 minutes of the 15:00-21:00 window
+    });
+    const item = makeAssignment({ dueDate: "2026-08-24T23:59:00", estimatedMinutes: 15, deadlineStrictness: "hard" });
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [item],
+      commitments: [commitment],
+      planningProfile: makePlanningProfile(),
+    });
+
+    assertNoOverlaps(result.blocks);
+    for (const block of workBlocks(result.blocks)) {
+      const start = minutesOfDay(block.start.split("T")[1]);
+      expect(start).toBeGreaterThanOrEqual(20 * 60 + 45);
+    }
+  });
+
+  it("frees a skipped block's time for rescheduling while still preserving it as a historical record", () => {
+    const skipped: ScheduleBlock = {
+      id: "skipped1",
+      userId: "u1",
+      workItemId: "original-item",
+      title: "Skipped session",
+      start: "2026-08-24T15:00",
+      end: "2026-08-24T16:00",
+      origin: "generated",
+      status: "skipped",
+    };
+    const item = makeAssignment({ dueDate: "2026-08-24T23:59:00", estimatedMinutes: 60, deadlineStrictness: "hard" });
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+      existingBlocks: [skipped],
+    });
+
+    // The historical record is preserved...
+    expect(result.blocks.find((b) => b.id === "skipped1")).toBeDefined();
+    // ...but its time was freed for new work rather than left permanently blocked.
+    const reclaimed = workBlocks(result.blocks).some(
+      (b) => b.start === "2026-08-24T15:00" || (b.start < "2026-08-24T16:00" && b.end > "2026-08-24T15:00")
+    );
+    expect(reclaimed).toBe(true);
+  });
+
+  it("schedules multiple high-weight assignments due the same day without overlapping or exceeding available time", () => {
+    const items = Array.from({ length: 4 }, (_, i) =>
+      makeAssignment({
+        title: `High ${i}`,
+        dueDate: "2026-08-24T23:59:00",
+        estimatedMinutes: 60,
+        weight: "high",
+        deadlineStrictness: "hard",
+      })
+    );
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: items,
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    assertNoOverlaps(result.blocks);
+    expect(totalMinutes(workBlocks(result.blocks))).toBeLessThanOrEqual(6 * 60); // the day's full window
   });
 });

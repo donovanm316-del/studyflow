@@ -69,7 +69,7 @@ export default function LandingPage() {
 
       <footer className="border-t border-border px-6 py-6">
         <p className="mx-auto max-w-5xl text-xs text-ink-faint">
-          StudyFlow is in early development. Scheduling and account features are placeholders.
+          StudyFlow is in early development. Scheduling runs on a real rule-based engine; account features (login/signup) are still placeholders.
         </p>
       </footer>
     </div>

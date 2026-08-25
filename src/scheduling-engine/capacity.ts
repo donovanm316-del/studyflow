@@ -11,17 +11,22 @@ import {
   ADAPTIVE_MAX_DAILY_CAPACITY_MINUTES,
   BASE_DAILY_CAPACITY_MINUTES,
   BEHIND_SCHEDULE_MULTIPLIER,
+  FEEDBACK_ADJUSTMENT_DECREASE,
+  FEEDBACK_ADJUSTMENT_INCREASE,
+  FEEDBACK_STREAK_LENGTH,
   FREE_TIME_PRIORITY_MULTIPLIER,
   MAX_DAILY_CAPACITY_MINUTES,
   RIGOR_CAPACITY_MULTIPLIER,
 } from "./constants";
-import type { PlanningProfile, CourseRigor } from "@/types/models";
+import type { CourseRigor, PlanningProfile, ScheduleFeedback } from "@/types/models";
 
 export interface DailyCapacityContext {
   /** Rigor of the courses with work actually due soon — an empty array leaves the target unchanged. */
   relevantRigors: CourseRigor[];
   /** Whether the student currently has overdue work or a hard deadline that needs extra time. */
   isBehind: boolean;
+  /** Multiplier from `calculateFeedbackAdjustment` — defaults to 1 (no adjustment) when omitted. */
+  feedbackAdjustment?: number;
 }
 
 export function calculateDailyCapacity(profile: PlanningProfile, context: DailyCapacityContext): number {
@@ -34,8 +39,12 @@ export function calculateDailyCapacity(profile: PlanningProfile, context: DailyC
   const rigorMultiplier = averageRigorMultiplier(context.relevantRigors);
   const freeTimeMultiplier = FREE_TIME_PRIORITY_MULTIPLIER[profile.freeTimePriority];
   const behindMultiplier = context.isBehind ? BEHIND_SCHEDULE_MULTIPLIER : 1;
+  const feedbackMultiplier = context.feedbackAdjustment ?? 1;
 
-  const target = base * rigorMultiplier * freeTimeMultiplier * behindMultiplier;
+  const target = base * rigorMultiplier * freeTimeMultiplier * behindMultiplier * feedbackMultiplier;
+  // The tolerance-based ceiling always wins, even when feedback would otherwise push higher —
+  // feedback can make a schedule lighter or heavier within a student's own stated tolerance, but
+  // never override it.
   return Math.min(max, Math.max(20, Math.round(target)));
 }
 
@@ -43,4 +52,20 @@ function averageRigorMultiplier(rigors: CourseRigor[]): number {
   if (rigors.length === 0) return 1;
   const sum = rigors.reduce((total, rigor) => total + RIGOR_CAPACITY_MULTIPLIER[rigor], 0);
   return sum / rigors.length;
+}
+
+/**
+ * Turns recent "how did this schedule feel?" feedback into a bounded capacity multiplier
+ * (Phase 2.5, Part 11). Deterministic and simple by design — no ML, no unbounded drift: only the
+ * most recent `FEEDBACK_STREAK_LENGTH` responses matter, and they must unanimously agree.
+ */
+export function calculateFeedbackAdjustment(feedbackHistory: ScheduleFeedback[]): number {
+  if (feedbackHistory.length < FEEDBACK_STREAK_LENGTH) return 1;
+
+  const mostRecentFirst = [...feedbackHistory].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const recent = mostRecentFirst.slice(0, FEEDBACK_STREAK_LENGTH);
+
+  if (recent.every((f) => f.workloadFeeling === "too-heavy")) return FEEDBACK_ADJUSTMENT_DECREASE;
+  if (recent.every((f) => f.workloadFeeling === "too-light")) return FEEDBACK_ADJUSTMENT_INCREASE;
+  return 1;
 }

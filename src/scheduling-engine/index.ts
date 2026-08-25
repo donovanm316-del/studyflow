@@ -7,7 +7,7 @@
  */
 export { generateSchedule, replan, scheduleTask, detectOverload } from "./scheduler";
 export { calculatePriority, calculateUrgency, explainPriority, isOverdue } from "./priority";
-export { calculateDailyCapacity } from "./capacity";
+export { calculateDailyCapacity, calculateFeedbackAdjustment } from "./capacity";
 export { findAvailableWindows } from "./availability";
 export { splitTask, sessionBounds, isSplittableWorkType } from "./splitting";
 

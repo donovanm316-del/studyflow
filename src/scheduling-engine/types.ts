@@ -11,6 +11,7 @@ import type {
   Project,
   Quiz,
   ScheduleBlock,
+  ScheduleFeedback,
   Test,
 } from "@/types/models";
 
@@ -32,6 +33,12 @@ export interface GenerateScheduleInput {
    * completed or skipped. Blocks in this list occupy time the same way commitments do.
    */
   existingBlocks?: ScheduleBlock[];
+  /**
+   * Past "how did this schedule feel?" responses (Part 11 of the Phase 2.5 spec). Used only to
+   * compute a small, bounded daily-capacity nudge — see `calculateFeedbackAdjustment` in
+   * capacity.ts. Not required; omitting it (or passing none) means no adjustment is applied.
+   */
+  feedback?: ScheduleFeedback[];
 }
 
 /** One factor breakdown behind a single work item's priority score (Part 3 / Part 15). */
@@ -71,6 +78,12 @@ export interface GenerateScheduleResult {
   /** True when there's no overdue work and everything upcoming is adequately planned (Part 11). */
   caughtUp: boolean;
   workAheadSuggestions: WorkAheadSuggestion[];
+  /**
+   * The multiplier actually applied to daily capacity based on recent feedback (1 = no
+   * adjustment). Exposed so the UI can explain *why* a schedule feels lighter/heavier than usual
+   * — see `calculateFeedbackAdjustment` in capacity.ts.
+   */
+  feedbackAdjustment: number;
 }
 
 /** Input for recomputing a plan after something changes (missed session, new item, moved due date). */

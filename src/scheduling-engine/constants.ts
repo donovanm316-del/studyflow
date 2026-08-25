@@ -135,3 +135,16 @@ export const MIN_CHUNK_MINUTES = 10;
 
 /** How far past the planning range the engine will look for optional work-ahead suggestions (Part 11). */
 export const WORK_AHEAD_HORIZON_DAYS = 14;
+
+/**
+ * Deterministic (non-ML) response to repeated schedule feedback (Phase 2.5, Part 11). Only the
+ * most recent `FEEDBACK_STREAK_LENGTH` responses are considered, and only if they unanimously
+ * agree — a single "just right" (or a mixed streak) resets the adjustment to neutral, so this
+ * self-corrects quickly rather than accumulating forever. The multipliers are deliberately mild
+ * and, combined with the existing per-tolerance MAX_DAILY_CAPACITY_MINUTES ceiling, can never
+ * push the schedule into an unreasonable workload — "repeatedly says too heavy" nudges the
+ * target down, it doesn't remove the ceiling.
+ */
+export const FEEDBACK_STREAK_LENGTH = 2;
+export const FEEDBACK_ADJUSTMENT_DECREASE = 0.85;
+export const FEEDBACK_ADJUSTMENT_INCREASE = 1.15;
