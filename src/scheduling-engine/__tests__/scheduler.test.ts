@@ -92,6 +92,35 @@ describe("generateSchedule — basic placement", () => {
     assertNoOverlaps(result.blocks);
   });
 
+  it("'early' work style spreads a multi-day item across the days available instead of cramming it all into today", () => {
+    // Reported scenario: a 120-minute test due in 3 days, under the default 'early' work style,
+    // was landing almost entirely on day one (~90 of 120 minutes) even though 3 more days were
+    // free — technically "early" but not "spread out". It should now use no more than
+    // EARLY_FRONT_LOAD_FACTOR (1.5x) of an even day-split on any single day.
+    const test = makeTest({ estimatedMinutes: 120, dueDate: "2026-08-27T23:59:00", deadlineStrictness: "hard" }); // 3 days out
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-27",
+      now: NOW,
+      workItems: [test],
+      commitments: [],
+      planningProfile: makePlanningProfile({ workStyle: "early" }),
+    });
+
+    const testBlocksByDay = new Map<string, number>();
+    for (const b of workBlocks(result.blocks).filter((b) => b.workItemId === test.id)) {
+      const day = toDateOnly(b.start);
+      const duration = minutesOfDay(b.end.split("T")[1]) - minutesOfDay(b.start.split("T")[1]);
+      testBlocksByDay.set(day, (testBlocksByDay.get(day) ?? 0) + duration);
+    }
+
+    expect(testBlocksByDay.size).toBeGreaterThan(1); // actually spread across more than one day
+    for (const minutesOnDay of testBlocksByDay.values()) {
+      expect(minutesOnDay).toBeLessThanOrEqual(Math.ceil((120 / 4) * 1.5)); // even-split * front-load factor
+    }
+  });
+
   it("inserts a break between two sessions of the same item packed into one window, not just between different items", () => {
     // A single big item whose two sessions land in the same day's window should still get a
     // real break between them — otherwise two 60-minute chunks back-to-back are just one

@@ -12,7 +12,13 @@
  * room. No randomness, no clock reads beyond the `now` the caller supplies — same inputs always
  * produce the same output.
  */
-import { BREAK_LENGTH_MINUTES, MIN_CHUNK_MINUTES, URGENT_PROTECTION_HORIZON_DAYS, WORK_AHEAD_HORIZON_DAYS } from "./constants";
+import {
+  BREAK_LENGTH_MINUTES,
+  EARLY_FRONT_LOAD_FACTOR,
+  MIN_CHUNK_MINUTES,
+  URGENT_PROTECTION_HORIZON_DAYS,
+  WORK_AHEAD_HORIZON_DAYS,
+} from "./constants";
 import { calculateDailyCapacity, calculateFeedbackAdjustment } from "./capacity";
 import { findAvailableWindows, subtractIntervals, type TimeWindow } from "./availability";
 import { calculatePriority, explainPriority } from "./priority";
@@ -227,15 +233,27 @@ export function scheduleTask(
     }
   }
 
+  const roomyDays = orderedDates.filter((date) => {
+    const state = dayState.get(date);
+    return state && state.capacityRemaining >= MIN_CHUNK_MINUTES && state.windows.some((w) => w.endMinute - w.startMinute >= MIN_CHUNK_MINUTES);
+  });
+
   let perSlotTargetMinutes: number | undefined;
-  if (context.workStyle === "consistent") {
-    const roomyDays = orderedDates.filter((date) => {
-      const state = dayState.get(date);
-      return state && state.capacityRemaining >= MIN_CHUNK_MINUTES && state.windows.some((w) => w.endMinute - w.startMinute >= MIN_CHUNK_MINUTES);
-    });
-    if (roomyDays.length > 0) {
-      perSlotTargetMinutes = Math.max(bounds.min, Math.ceil(remainingMinutes / roomyDays.length));
-    }
+  if (context.workStyle === "consistent" && roomyDays.length > 0) {
+    perSlotTargetMinutes = Math.max(bounds.min, Math.ceil(remainingMinutes / roomyDays.length));
+  } else if (
+    (context.workStyle === "early" || context.workStyle === "adaptive") &&
+    roomyDays.length > 1 &&
+    remainingMinutes > bounds.max
+  ) {
+    // "Early" should still start today, but without a per-day cap a multi-day item with enough
+    // capacity would get crammed entirely into day one — which starts early but doesn't actually
+    // spread across the days available. Scale the even-split target up by EARLY_FRONT_LOAD_FACTOR
+    // so it still leans toward finishing ahead of the deadline rather than spreading perfectly
+    // evenly (that's what "consistent" is for), just not at the cost of one overloaded day.
+    // Skipped for small items (remainingMinutes <= bounds.max) — nothing needs spreading if it
+    // already fits in a single session.
+    perSlotTargetMinutes = Math.max(bounds.min, Math.ceil((remainingMinutes / roomyDays.length) * EARLY_FRONT_LOAD_FACTOR));
   }
 
   const breakMinutes = context.autoBreaks ? BREAK_LENGTH_MINUTES[context.breakPreference] : 0;

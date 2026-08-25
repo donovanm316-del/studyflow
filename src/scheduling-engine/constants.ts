@@ -77,6 +77,17 @@ export const URGENCY_HORIZON_DAYS = 10;
 export const URGENT_PROTECTION_HORIZON_DAYS = 2;
 
 /**
+ * How much more than an even day-split a single item may claim per day under "early"/"adaptive"
+ * work style (Part 9: "early" = "complete work well before deadlines", not "complete work
+ * instantly"). Without this, an item with enough remaining days and daily capacity gets crammed
+ * entirely into day one — which technically finishes early but ignores every other day available
+ * to spread across, and can crowd out other items sharing that first day. 1.5 still lets "early"
+ * finish ahead of a "consistent" spread (which uses exactly 1x the even split) while capping how
+ * lopsided a single day can get.
+ */
+export const EARLY_FRONT_LOAD_FACTOR = 1.5;
+
+/**
  * Baseline daily workload target in minutes, before rigor/free-time-priority/behind-schedule
  * adjustments, by workload tolerance (Part 9 / Part 10). These are *soft targets*, not hard
  * caps and not guarantees — actual available time and deadlines still bound the real schedule.
