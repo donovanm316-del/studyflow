@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { TaskRow } from "@/components/tasks/TaskRow";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { WorkloadStatusBadge } from "@/components/schedule/WorkloadStatusBadge";
 import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
 import { formatDueLabel } from "@/lib/schedule-format";
@@ -11,10 +12,17 @@ import { currentWeekRange, todayDateOnly } from "@/lib/now";
 
 const KIND_LABEL: Record<string, string> = { assignment: "Assignment", test: "Test", quiz: "Quiz", project: "Project" };
 
+function addDaysToDateOnly(dateOnly: string, days: number): string {
+  const [y, m, d] = dateOnly.split("-").map(Number);
+  const date = new Date(y, m - 1, d + days);
+  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`;
+}
+
 export default function DashboardPage() {
   const { workItems, workSessions } = useAppData();
   const { start, end } = currentWeekRange();
   const today = todayDateOnly();
+  const todaySoonCutoff = addDaysToDateOnly(today, 1); // "due soon" = due today or tomorrow
   const result = useSchedule(start, end);
 
   const dueThisWeek = workItems.filter((item) => item.dueDate.slice(0, 10) >= start && item.dueDate.slice(0, 10) <= end);
@@ -31,6 +39,10 @@ export default function DashboardPage() {
   return (
     <div>
       <PageHeader title="Dashboard" description="A quick look at your workload and how the week is going." />
+
+      <div className="mb-6">
+        <WorkloadStatusBadge status={result.workloadStatus} />
+      </div>
 
       <div className="grid gap-6 sm:grid-cols-2">
         <section className="rounded-lg border border-border bg-surface p-5">
@@ -63,17 +75,28 @@ export default function DashboardPage() {
         {upcoming.length === 0 ? (
           <EmptyState title="You're all caught up" description="Nothing outstanding right now." />
         ) : (
-          upcoming.map((item) => (
-            <TaskRow
-              key={item.id}
-              title={item.title}
-              subject={item.subject}
-              dueLabel={formatDueLabel(item.dueDate, today)}
-              status={item.status}
-              kindLabel={KIND_LABEL[item.kind] ?? item.kind}
-              estimatedMinutes={item.estimatedMinutes}
-            />
-          ))
+          upcoming.map((item) => {
+            const remainingMinutes = Math.max(0, item.estimatedMinutes - (item.actualMinutes ?? 0));
+            const plannedSessionCount = result.blocks.filter(
+              (b) => b.workItemId === item.id && b.status === "planned"
+            ).length;
+            const dueSoon = item.dueDate.slice(0, 10) <= todaySoonCutoff;
+            const urgent = dueSoon && (item.deadlineStrictness === "hard" || item.deadlineStrictness === "important");
+            return (
+              <TaskRow
+                key={item.id}
+                title={item.title}
+                subject={item.subject}
+                dueLabel={formatDueLabel(item.dueDate, today)}
+                status={item.status}
+                kindLabel={KIND_LABEL[item.kind] ?? item.kind}
+                estimatedMinutes={item.estimatedMinutes}
+                remainingMinutes={remainingMinutes}
+                plannedSessionCount={plannedSessionCount}
+                urgent={urgent}
+              />
+            );
+          })
         )}
       </section>
     </div>

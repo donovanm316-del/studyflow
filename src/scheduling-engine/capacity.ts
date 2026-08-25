@@ -18,7 +18,7 @@ import {
   MAX_DAILY_CAPACITY_MINUTES,
   RIGOR_CAPACITY_MULTIPLIER,
 } from "./constants";
-import type { CourseRigor, PlanningProfile, ScheduleFeedback } from "@/types/models";
+import type { BreakPreference, CourseRigor, FreeTimePriority, PlanningProfile, ScheduleFeedback } from "@/types/models";
 
 export interface DailyCapacityContext {
   /** Rigor of the courses with work actually due soon — an empty array leaves the target unchanged. */
@@ -68,4 +68,57 @@ export function calculateFeedbackAdjustment(feedbackHistory: ScheduleFeedback[])
   if (recent.every((f) => f.workloadFeeling === "too-heavy")) return FEEDBACK_ADJUSTMENT_DECREASE;
   if (recent.every((f) => f.workloadFeeling === "too-light")) return FEEDBACK_ADJUSTMENT_INCREASE;
   return 1;
+}
+
+const BREAK_PREFERENCE_ORDER: BreakPreference[] = ["frequent", "balanced", "minimal"];
+const FREE_TIME_PRIORITY_ORDER: FreeTimePriority[] = ["low", "medium", "high"];
+
+/**
+ * Same bounded, unanimous-streak-of-2 pattern as `calculateFeedbackAdjustment`, applied to the
+ * "how do the breaks feel?" check-in question (Phase 3A, Part 9) instead of daily capacity.
+ * Returns the profile's current value (no change) unless the two most recent responses that
+ * answered this question agree. One step at a time, clamped at the ends of the scale — this can
+ * never jump straight from "frequent" to "minimal" on a single streak.
+ */
+export function calculateBreakPreferenceAdjustment(
+  feedbackHistory: ScheduleFeedback[],
+  current: BreakPreference
+): BreakPreference {
+  const answered = feedbackHistory
+    .filter((f) => f.breaksFeeling != null)
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  if (answered.length < FEEDBACK_STREAK_LENGTH) return current;
+
+  const recent = answered.slice(0, FEEDBACK_STREAK_LENGTH);
+  const index = BREAK_PREFERENCE_ORDER.indexOf(current);
+
+  if (recent.every((f) => f.breaksFeeling === "too-many")) {
+    return BREAK_PREFERENCE_ORDER[Math.min(BREAK_PREFERENCE_ORDER.length - 1, index + 1)];
+  }
+  if (recent.every((f) => f.breaksFeeling === "too-few")) {
+    return BREAK_PREFERENCE_ORDER[Math.max(0, index - 1)];
+  }
+  return current;
+}
+
+/** Same pattern as `calculateBreakPreferenceAdjustment`, for the "how much free time?" question. */
+export function calculateFreeTimePriorityAdjustment(
+  feedbackHistory: ScheduleFeedback[],
+  current: FreeTimePriority
+): FreeTimePriority {
+  const answered = feedbackHistory
+    .filter((f) => f.freeTimeFeeling != null)
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  if (answered.length < FEEDBACK_STREAK_LENGTH) return current;
+
+  const recent = answered.slice(0, FEEDBACK_STREAK_LENGTH);
+  const index = FREE_TIME_PRIORITY_ORDER.indexOf(current);
+
+  if (recent.every((f) => f.freeTimeFeeling === "more")) {
+    return FREE_TIME_PRIORITY_ORDER[Math.min(FREE_TIME_PRIORITY_ORDER.length - 1, index + 1)];
+  }
+  if (recent.every((f) => f.freeTimeFeeling === "less")) {
+    return FREE_TIME_PRIORITY_ORDER[Math.max(0, index - 1)];
+  }
+  return current;
 }

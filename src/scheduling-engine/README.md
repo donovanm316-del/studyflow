@@ -15,9 +15,9 @@ engine:
 - Testable without rendering anything (see `__tests__/`)
 - Reusable later from a mobile client or a background job
 - Swappable — a smarter algorithm, or eventually the AI Coach, can call into this
-  module without touching UI code. The Coach is explicitly out of scope for Phase 2;
-  the engine is shaped so a future Coach could call `generateSchedule`/`replan` the
-  same way the UI does, rather than manipulating schedule state directly.
+  module without touching UI code. The Coach is explicitly out of scope through Phase 3A;
+  the engine is shaped so a future Coach could call `generateSchedule`/`replanRemainingSchedule`
+  the same way the UI does, rather than manipulating schedule state directly.
 
 ## Module map
 
@@ -26,13 +26,27 @@ engine:
 | `constants.ts` | Every tunable number (priority weights, capacity baselines, session-length bounds), documented in place |
 | `date-utils.ts` | Local-time date/time-of-day helpers (no timezone conversion) |
 | `priority.ts` | `calculatePriority`, `calculateUrgency`, `explainPriority` — the scoring system in Part 3/15 of the Phase 2 spec |
-| `capacity.ts` | `calculateDailyCapacity` — soft daily workload target, not a hard cap; `calculateFeedbackAdjustment` — bounded nudge from recent schedule feedback |
-| `availability.ts` | `findAvailableWindows` — free time windows from Planning Profile minus commitments minus existing blocks |
+| `capacity.ts` | `calculateDailyCapacity` — soft daily workload target, not a hard cap; `calculateFeedbackAdjustment`, `calculateBreakPreferenceAdjustment`, `calculateFreeTimePriorityAdjustment` — bounded nudges from recent schedule feedback |
+| `availability.ts` | `findAvailableWindows`, `subtractIntervals` — free time windows from Planning Profile minus commitments minus existing blocks |
 | `splitting.ts` | `splitTask` — carves remaining minutes into session-length chunks across day slots |
-| `scheduler.ts` | `generateSchedule`, `scheduleTask`, `detectOverload`, `replan` — orchestrates everything above |
+| `workload-status.ts` | `calculateWorkloadStatus` — ahead/on-track/getting-tight/at-risk, from the same demand/availability numbers `detectOverload` uses |
+| `scheduler.ts` | `generateSchedule`, `scheduleTask`, `detectOverload`, `replanRemainingSchedule` — orchestrates everything above |
 | `index.ts` | The only module the UI should import from |
 
-## Current status (Phase 2 + 2.5)
+## Current status (Phase 2 + 2.5 + 3A)
+
+**Phase 3A additions:** `replanRemainingSchedule` (an explicitly-named wrapper making the "recompute
+everything not fixed" behavior `generateSchedule` already had a first-class, documented concept —
+see its docstring in `scheduler.ts`); a fix so a manually-moved-but-not-yet-completed block reduces
+the item's remaining minutes (previously the engine could schedule the same work a second time
+elsewhere after a manual move); test/quiz prep is now excluded from landing on the item's own due
+date; an optional `preferredStartDate` hint narrows an item's schedulable window without touching
+priority; `calculateWorkloadStatus` and the per-day `dailyForecast` on `GenerateScheduleResult`,
+both grounded in the same numbers the engine already computes for overload detection;
+`WorkAheadSuggestion.type` distinguishes "review" (tests/quizzes) from "work-ahead" (everything
+else); `calculateBreakPreferenceAdjustment`/`calculateFreeTimePriorityAdjustment` apply the same
+unanimous-streak-of-2 pattern as the capacity feedback adjustment to the Planning Profile's break
+preference and free-time priority.
 
 Implemented: priority scoring with a documented, adjustable weight system; a two-tier placement
 order that protects near-deadline items (`URGENT_PROTECTION_HORIZON_DAYS`) from being crowded
@@ -63,3 +77,6 @@ for this module — see Part 24 of the Phase 2 spec.
   simplification but not a per-day-tuned optimum.
 - Placement is a single greedy pass ordered by priority score, not a global optimizer — it can
   produce a good, explainable schedule, but not necessarily the mathematically optimal one.
+- `calculateWorkloadStatus` and `dailyForecast` inherit the single-per-range daily capacity target
+  above — they're an honest reflection of what the engine actually computed for that call, not an
+  independently-tuned "true" forecast.

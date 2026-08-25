@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Client-side application state for Phase 2. There is no backend yet — everything here lives in
+ * Client-side application state (Phase 2, extended in Phase 3A with interactive sessions,
+ * replanning, and commitment management). There is no backend yet — everything here lives in
  * the browser's localStorage, scoped to one demo user. This is real (not fake) persistence: it
  * survives reloads, it just isn't synced anywhere. A future phase can replace this module with a
  * real data layer without touching the scheduling engine or most of the UI, since components only
@@ -11,13 +12,18 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { createSeedData, DEMO_USER_ID } from "./seed";
 import { todayDateOnly } from "@/lib/now";
 import type {
+  ActiveWorkSession,
   Commitment,
   PlanningProfile,
   ScheduleBlock,
   ScheduleFeedback,
   WorkSession,
 } from "@/types/models";
-import type { SchedulableWorkItem } from "@/scheduling-engine";
+import {
+  calculateBreakPreferenceAdjustment,
+  calculateFreeTimePriorityAdjustment,
+  type SchedulableWorkItem,
+} from "@/scheduling-engine";
 
 const STORAGE_KEY = "studyflow.appData.v1";
 
@@ -29,6 +35,8 @@ interface AppState {
   fixedBlocks: ScheduleBlock[];
   workSessions: WorkSession[];
   feedback: ScheduleFeedback[];
+  /** At most one work session in progress at a time (Phase 3A, Part 4). */
+  activeSession: ActiveWorkSession | null;
 }
 
 /**
@@ -54,6 +62,7 @@ const EMPTY_STATE: AppState = {
   fixedBlocks: [],
   workSessions: [],
   feedback: [],
+  activeSession: null,
 };
 
 export type NewWorkItemInput = Omit<SchedulableWorkItem, "id" | "userId" | "status" | "createdAt" | "updatedAt">;
@@ -64,13 +73,34 @@ interface AppDataContextValue extends AppState {
   addWorkItem: (input: NewWorkItemInput) => void;
   markWorkItemComplete: (id: string) => void;
   markWorkItemIncomplete: (id: string) => void;
-  completeBlock: (block: ScheduleBlock, actualMinutes: number) => void;
+  completeBlock: (
+    block: ScheduleBlock,
+    actualMinutes: number,
+    estimateFeedback?: WorkSession["estimateFeedback"]
+  ) => void;
   skipBlock: (block: ScheduleBlock) => void;
   moveBlock: (block: ScheduleBlock, newStart: string, newEnd: string) => void;
+  /** "I can't do this today" → re-plan (Phase 3A, Part 2): skips this block AND releases any
+   *  other manually-pinned blocks today so the rest of the day can reflow around the change,
+   *  rather than just relocating the one item that triggered it. */
+  replanRemainingToday: (block: ScheduleBlock) => void;
   regenerateFrom: (dateOnly: string) => void;
   addCommitment: (input: Omit<Commitment, "id" | "userId">) => void;
+  removeCommitment: (id: string) => void;
   updatePlanningProfile: (patch: Partial<PlanningProfile>) => void;
   submitFeedback: (feedback: Omit<ScheduleFeedback, "id" | "userId" | "createdAt">) => void;
+  /** Starts a timed session on a scheduled block (Phase 3A, Part 4). */
+  startSession: (block: ScheduleBlock) => void;
+  /** Starts a timed session directly on a work item that isn't part of today's generated plan —
+   *  used by the "work ahead" / "review" caught-up suggestions (Part 7). */
+  startAdHocSession: (workItemId: string, workItemTitle: string, plannedMinutes?: number) => void;
+  /** Abandons the in-progress session without recording it (e.g. the student changed their mind). */
+  cancelActiveSession: () => void;
+  /** Finishes the ad-hoc session started by `startAdHocSession`. */
+  completeAdHocSession: (
+    actualMinutes: number,
+    estimateFeedback?: WorkSession["estimateFeedback"]
+  ) => void;
 }
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
@@ -99,7 +129,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     }
     if (!next) {
       const seed = createSeedData(todayDateOnly());
-      next = { ...seed, fixedBlocks: [], workSessions: [], feedback: [] };
+      next = { ...seed, fixedBlocks: [], workSessions: [], feedback: [], activeSession: null };
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time load from an external store, not a derived-state loop
     setState(next);
@@ -146,38 +176,46 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  const completeBlock = useCallback((block: ScheduleBlock, actualMinutes: number) => {
-    setState((s) => {
-      const plannedMinutes = minutesBetween(block.start, block.end);
-      const session: WorkSession = {
-        id: newId("session"),
-        userId: DEMO_USER_ID,
-        workItemId: block.workItemId ?? "",
-        scheduleBlockId: block.id,
-        start: block.start,
-        end: block.end,
-        plannedMinutes,
-        minutesSpent: actualMinutes,
-      };
-      return {
-        ...s,
-        fixedBlocks: [...s.fixedBlocks, { ...block, status: "completed" }],
-        workSessions: block.workItemId ? [...s.workSessions, session] : s.workSessions,
-        workItems: block.workItemId
-          ? s.workItems.map((item) => {
-              if (item.id !== block.workItemId) return item;
-              const newActual = (item.actualMinutes ?? 0) + actualMinutes;
-              return {
-                ...item,
-                actualMinutes: newActual,
-                status: newActual >= item.estimatedMinutes ? "completed" : "in-progress",
-                updatedAt: new Date().toISOString(),
-              };
-            })
-          : s.workItems,
-      };
-    });
-  }, []);
+  const completeBlock = useCallback(
+    (block: ScheduleBlock, actualMinutes: number, estimateFeedback?: WorkSession["estimateFeedback"]) => {
+      setState((s) => {
+        const plannedMinutes = minutesBetween(block.start, block.end);
+        const session: WorkSession = {
+          id: newId("session"),
+          userId: DEMO_USER_ID,
+          workItemId: block.workItemId ?? "",
+          scheduleBlockId: block.id,
+          start: block.start,
+          end: block.end,
+          plannedMinutes,
+          minutesSpent: actualMinutes,
+          estimateFeedback,
+        };
+        return {
+          ...s,
+          // A fresh id, not `block.id`: the engine's block ids are deterministic (derived from
+          // item/date/time), so a later regeneration that happens to land on the very same
+          // item/date/time would otherwise collide with this historical record.
+          fixedBlocks: [...s.fixedBlocks, { ...block, id: newId("done"), status: "completed" }],
+          workSessions: block.workItemId ? [...s.workSessions, session] : s.workSessions,
+          workItems: block.workItemId
+            ? s.workItems.map((item) => {
+                if (item.id !== block.workItemId) return item;
+                const newActual = (item.actualMinutes ?? 0) + actualMinutes;
+                return {
+                  ...item,
+                  actualMinutes: newActual,
+                  status: newActual >= item.estimatedMinutes ? "completed" : "in-progress",
+                  updatedAt: new Date().toISOString(),
+                };
+              })
+            : s.workItems,
+          activeSession: s.activeSession?.blockId === block.id ? null : s.activeSession,
+        };
+      });
+    },
+    []
+  );
 
   const skipBlock = useCallback((block: ScheduleBlock) => {
     setState((s) => {
@@ -195,8 +233,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         : null;
       return {
         ...s,
-        fixedBlocks: [...s.fixedBlocks, { ...block, status: "skipped" }],
+        // See completeBlock: a fresh id avoids colliding with a future regenerated block that
+        // happens to land on the same item/date/time this one originally occupied.
+        fixedBlocks: [...s.fixedBlocks, { ...block, id: newId("skipped"), status: "skipped" }],
         workSessions: session ? [...s.workSessions, session] : s.workSessions,
+        activeSession: s.activeSession?.blockId === block.id ? null : s.activeSession,
       };
     });
   }, []);
@@ -206,9 +247,41 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       ...s,
       fixedBlocks: [
         ...s.fixedBlocks,
-        { ...block, start: newStart, end: newEnd, origin: "manual-override", status: "planned" },
+        // Fresh id for the same reason as completeBlock/skipBlock — the moved block now lives at
+        // a different date/time, but its old deterministic id remains available for the engine to
+        // reuse on a future regeneration of the same item's original slot.
+        { ...block, id: newId("moved"), start: newStart, end: newEnd, origin: "manual-override", status: "planned" },
       ],
     }));
+  }, []);
+
+  const replanRemainingToday = useCallback((block: ScheduleBlock) => {
+    const dateOnly = block.start.slice(0, 10);
+    setState((s) => {
+      const session: WorkSession | null = block.workItemId
+        ? {
+            id: newId("session"),
+            userId: DEMO_USER_ID,
+            workItemId: block.workItemId,
+            scheduleBlockId: block.id,
+            start: block.start,
+            end: block.end,
+            plannedMinutes: minutesBetween(block.start, block.end),
+            postponed: true,
+          }
+        : null;
+      // Release any other manually-pinned blocks today too, so the rest of the day is free to
+      // reflow around the change rather than staying locked into slots planned before it.
+      const releasedFixedBlocks = s.fixedBlocks.filter(
+        (b) => !(b.origin === "manual-override" && b.status === "planned" && b.start.slice(0, 10) === dateOnly && b.id !== block.id)
+      );
+      return {
+        ...s,
+        fixedBlocks: [...releasedFixedBlocks, { ...block, id: newId("skipped"), status: "skipped" }],
+        workSessions: session ? [...s.workSessions, session] : s.workSessions,
+        activeSession: s.activeSession?.blockId === block.id ? null : s.activeSession,
+      };
+    });
   }, []);
 
   const regenerateFrom = useCallback((dateOnly: string) => {
@@ -225,15 +298,96 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const removeCommitment = useCallback((id: string) => {
+    setState((s) => ({ ...s, commitments: s.commitments.filter((c) => c.id !== id) }));
+  }, []);
+
+  const startSession = useCallback((block: ScheduleBlock) => {
+    if (!block.workItemId) return;
+    setState((s) => ({
+      ...s,
+      activeSession: {
+        blockId: block.id,
+        workItemId: block.workItemId!,
+        workItemTitle: block.title,
+        plannedMinutes: minutesBetween(block.start, block.end),
+        startedAt: new Date().toISOString(),
+      },
+    }));
+  }, []);
+
+  const startAdHocSession = useCallback((workItemId: string, workItemTitle: string, plannedMinutes?: number) => {
+    setState((s) => ({
+      ...s,
+      activeSession: { workItemId, workItemTitle, plannedMinutes, startedAt: new Date().toISOString() },
+    }));
+  }, []);
+
+  const cancelActiveSession = useCallback(() => {
+    setState((s) => ({ ...s, activeSession: null }));
+  }, []);
+
+  const completeAdHocSession = useCallback(
+    (actualMinutes: number, estimateFeedback?: WorkSession["estimateFeedback"]) => {
+      setState((s) => {
+        const active = s.activeSession;
+        if (!active) return s;
+        const now = new Date().toISOString();
+        const session: WorkSession = {
+          id: newId("session"),
+          userId: DEMO_USER_ID,
+          workItemId: active.workItemId,
+          start: active.startedAt,
+          end: now,
+          plannedMinutes: active.plannedMinutes,
+          minutesSpent: actualMinutes,
+          estimateFeedback,
+        };
+        return {
+          ...s,
+          workSessions: [...s.workSessions, session],
+          workItems: s.workItems.map((item) => {
+            if (item.id !== active.workItemId) return item;
+            const newActual = (item.actualMinutes ?? 0) + actualMinutes;
+            return {
+              ...item,
+              actualMinutes: newActual,
+              status: newActual >= item.estimatedMinutes ? "completed" : "in-progress",
+              updatedAt: now,
+            };
+          }),
+          activeSession: null,
+        };
+      });
+    },
+    []
+  );
+
   const updatePlanningProfile = useCallback((patch: Partial<PlanningProfile>) => {
     setState((s) => ({ ...s, planningProfile: { ...s.planningProfile, ...patch } }));
   }, []);
 
   const submitFeedback = useCallback((feedback: Omit<ScheduleFeedback, "id" | "userId" | "createdAt">) => {
-    setState((s) => ({
-      ...s,
-      feedback: [...s.feedback, { ...feedback, id: newId("feedback"), userId: DEMO_USER_ID, createdAt: new Date().toISOString() }],
-    }));
+    setState((s) => {
+      const nextFeedback = [
+        ...s.feedback,
+        { ...feedback, id: newId("feedback"), userId: DEMO_USER_ID, createdAt: new Date().toISOString() },
+      ];
+      // A bounded, deterministic nudge to the profile itself (Phase 3A, Part 9) — same
+      // unanimous-streak-of-2 pattern as the daily-capacity feedback adjustment, just applied to
+      // break preference and free-time priority instead of a numeric target.
+      const nextBreakPreference = calculateBreakPreferenceAdjustment(nextFeedback, s.planningProfile.breakPreference);
+      const nextFreeTimePriority = calculateFreeTimePriorityAdjustment(nextFeedback, s.planningProfile.freeTimePriority);
+      return {
+        ...s,
+        feedback: nextFeedback,
+        planningProfile: {
+          ...s.planningProfile,
+          breakPreference: nextBreakPreference,
+          freeTimePriority: nextFreeTimePriority,
+        },
+      };
+    });
   }, []);
 
   const value = useMemo<AppDataContextValue>(
@@ -246,12 +400,37 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       completeBlock,
       skipBlock,
       moveBlock,
+      replanRemainingToday,
       regenerateFrom,
       addCommitment,
+      removeCommitment,
       updatePlanningProfile,
       submitFeedback,
+      startSession,
+      startAdHocSession,
+      cancelActiveSession,
+      completeAdHocSession,
     }),
-    [state, hydrated, addWorkItem, markWorkItemComplete, markWorkItemIncomplete, completeBlock, skipBlock, moveBlock, regenerateFrom, addCommitment, updatePlanningProfile, submitFeedback]
+    [
+      state,
+      hydrated,
+      addWorkItem,
+      markWorkItemComplete,
+      markWorkItemIncomplete,
+      completeBlock,
+      skipBlock,
+      moveBlock,
+      replanRemainingToday,
+      regenerateFrom,
+      addCommitment,
+      removeCommitment,
+      updatePlanningProfile,
+      submitFeedback,
+      startSession,
+      startAdHocSession,
+      cancelActiveSession,
+      completeAdHocSession,
+    ]
   );
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;

@@ -96,7 +96,9 @@ describe("generateSchedule — basic placement", () => {
     // Reported scenario: a 120-minute test due in 3 days, under the default 'early' work style,
     // was landing almost entirely on day one (~90 of 120 minutes) even though 3 more days were
     // free — technically "early" but not "spread out". It should now use no more than
-    // EARLY_FRONT_LOAD_FACTOR (1.5x) of an even day-split on any single day.
+    // EARLY_FRONT_LOAD_FACTOR (1.5x) of an even day-split on any single day. Note: the due date
+    // itself (Aug 27) is excluded from a test's schedulable window (Part 11 of Phase 3A — prep
+    // must finish before the test), so the even split is across the 3 remaining days, not 4.
     const test = makeTest({ estimatedMinutes: 120, dueDate: "2026-08-27T23:59:00", deadlineStrictness: "hard" }); // 3 days out
     const result = generateSchedule({
       userId: "u1",
@@ -116,8 +118,9 @@ describe("generateSchedule — basic placement", () => {
     }
 
     expect(testBlocksByDay.size).toBeGreaterThan(1); // actually spread across more than one day
+    expect(testBlocksByDay.has("2026-08-27")).toBe(false); // never lands on the test's own due date
     for (const minutesOnDay of testBlocksByDay.values()) {
-      expect(minutesOnDay).toBeLessThanOrEqual(Math.ceil((120 / 4) * 1.5)); // even-split * front-load factor
+      expect(minutesOnDay).toBeLessThanOrEqual(Math.ceil((120 / 3) * 1.5)); // even-split (3 usable days) * front-load factor
     }
   });
 
@@ -711,5 +714,218 @@ describe("generateSchedule — additional edge cases", () => {
 
     assertNoOverlaps(result.blocks);
     expect(totalMinutes(workBlocks(result.blocks))).toBeLessThanOrEqual(6 * 60); // the day's full window
+  });
+});
+
+describe("Phase 3A — manual overrides are respected, not double-scheduled", () => {
+  it("does not schedule additional time for a work item that already has a manually-moved planned block", () => {
+    // Regression: moving a not-yet-completed session used to leave the item's "remaining minutes"
+    // untouched, so the engine would place the same work a second time somewhere else.
+    const item = makeAssignment({ estimatedMinutes: 90, dueDate: "2026-08-28T23:59:00", deadlineStrictness: "important" });
+    const movedBlock: ScheduleBlock = {
+      id: "manual_1",
+      userId: "u1",
+      workItemId: item.id,
+      workItemKind: "assignment",
+      title: item.title,
+      start: "2026-08-25T16:00",
+      end: "2026-08-25T17:00", // 60 of the 90 minutes already manually placed
+      origin: "manual-override",
+      status: "planned",
+    };
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-28",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      existingBlocks: [movedBlock],
+      planningProfile: makePlanningProfile(),
+    });
+
+    const generatedForItem = workBlocks(result.blocks).filter((b) => b.workItemId === item.id);
+    const generatedMinutes = totalMinutes(generatedForItem);
+    // Only the remaining 30 minutes (90 - 60 already manually placed) should still be scheduled.
+    expect(generatedMinutes).toBeLessThanOrEqual(30);
+    expect(generatedMinutes + 60).toBeLessThanOrEqual(item.estimatedMinutes + 1); // never exceeds the real total
+    assertNoOverlaps([...result.blocks]);
+  });
+
+  it("does not re-place a manually-moved block that fully covers the item's remaining work", () => {
+    const item = makeAssignment({ estimatedMinutes: 45, dueDate: "2026-08-28T23:59:00" });
+    const movedBlock: ScheduleBlock = {
+      id: "manual_2",
+      userId: "u1",
+      workItemId: item.id,
+      workItemKind: "assignment",
+      title: item.title,
+      start: "2026-08-26T18:00",
+      end: "2026-08-26T18:45",
+      origin: "manual-override",
+      status: "planned",
+    };
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-28",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      existingBlocks: [movedBlock],
+      planningProfile: makePlanningProfile(),
+    });
+
+    expect(workBlocks(result.blocks).some((b) => b.workItemId === item.id)).toBe(false);
+    expect(result.unscheduledWorkItemIds).not.toContain(item.id);
+  });
+});
+
+describe("Phase 3A — test/quiz prep is scheduled before, never on, the due date", () => {
+  it("keeps quiz-prep sessions off the quiz's own due date even under a consistent work style", () => {
+    const testItem = makeTest({ workType: "quiz-prep", estimatedMinutes: 40, dueDate: "2026-08-26T23:59:00" });
+    const quiz = { ...testItem, kind: "quiz" as const };
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-26",
+      now: NOW,
+      workItems: [quiz],
+      commitments: [],
+      planningProfile: makePlanningProfile({ workStyle: "consistent" }),
+    });
+
+    const days = new Set(workBlocks(result.blocks).filter((b) => b.workItemId === quiz.id).map((b) => toDateOnly(b.start)));
+    expect(days.has("2026-08-26")).toBe(false);
+  });
+
+  it("still schedules test prep on the one available day when the test is due tomorrow", () => {
+    // Guard against the due-date exclusion emptying the window entirely for a near-term test.
+    const test = makeTest({ estimatedMinutes: 30, dueDate: "2026-08-25T23:59:00" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-25",
+      now: NOW,
+      workItems: [test],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    expect(workBlocks(result.blocks).some((b) => b.workItemId === test.id)).toBe(true);
+  });
+});
+
+describe("Phase 3A — preferred start date", () => {
+  it("does not schedule an item before its preferredStartDate even when earlier days have room", () => {
+    const item = makeAssignment({
+      estimatedMinutes: 30,
+      dueDate: "2026-08-28T23:59:00",
+      deadlineStrictness: "flexible",
+      preferredStartDate: "2026-08-27",
+    });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-28",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    const days = workBlocks(result.blocks).filter((b) => b.workItemId === item.id).map((b) => toDateOnly(b.start));
+    for (const day of days) {
+      expect(day >= "2026-08-27").toBe(true);
+    }
+  });
+});
+
+describe("Phase 3A — workload status", () => {
+  it("reports 'ahead' when there is no remaining work in range", () => {
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-27",
+      now: NOW,
+      workItems: [],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+    expect(result.workloadStatus.level).toBe("ahead");
+  });
+
+  it("reports 'at-risk' when a hard deadline could not be fully scheduled", () => {
+    const items = Array.from({ length: 6 }, (_, i) =>
+      makeAssignment({
+        title: `Big ${i}`,
+        estimatedMinutes: 300,
+        dueDate: "2026-08-24T23:59:00",
+        deadlineStrictness: "hard",
+      })
+    );
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: items,
+      commitments: [],
+      planningProfile: makePlanningProfile({ workloadTolerance: "light" }),
+    });
+    expect(result.workloadStatus.level).toBe("at-risk");
+    expect(result.workloadStatus.message).toMatch(/at risk/i);
+  });
+
+  it("reports 'on-track' for a comfortable, well-covered workload", () => {
+    const item = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-30T23:59:00", deadlineStrictness: "flexible" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-30",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile({ workloadTolerance: "heavy" }),
+    });
+    expect(result.workloadStatus.level).toBe("on-track");
+  });
+});
+
+describe("Phase 3A — daily workload forecast", () => {
+  it("reflects actual planned work per day, grounded in the real schedule output", () => {
+    const item = makeAssignment({ estimatedMinutes: 180, dueDate: "2026-08-27T23:59:00", deadlineStrictness: "important" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-27",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile({ workStyle: "consistent" }),
+    });
+
+    expect(result.dailyForecast).toHaveLength(4);
+    const totalForecastWork = result.dailyForecast.reduce((sum, d) => sum + d.workMinutes, 0);
+    const totalActualWork = totalMinutes(workBlocks(result.blocks).filter((b) => b.workItemId === item.id));
+    expect(totalForecastWork).toBe(totalActualWork);
+    for (const day of result.dailyForecast) {
+      expect(day.workMinutes).toBeLessThanOrEqual(day.availableMinutes + 1); // capacity target, not a hard wall, small rounding slack
+    }
+  });
+
+  it("returns an all-zero forecast (not a fabricated one) when there is no work to schedule", () => {
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-26",
+      now: NOW,
+      workItems: [],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+    expect(result.dailyForecast.every((d) => d.workMinutes === 0)).toBe(true);
   });
 });

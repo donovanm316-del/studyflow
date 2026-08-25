@@ -35,6 +35,7 @@ export function AddWorkItemModal({ open, onClose, onSubmit, kindOptions }: AddWo
   const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [preferredStartDate, setPreferredStartDate] = useState("");
   const [estimatedMinutes, setEstimatedMinutes] = useState(30);
   const [weight, setWeight] = useState<AssignmentWeight>("medium");
   const [deadlineStrictness, setDeadlineStrictness] = useState<DeadlineStrictness>("hard");
@@ -48,6 +49,7 @@ export function AddWorkItemModal({ open, onClose, onSubmit, kindOptions }: AddWo
     setTitle("");
     setSubject("");
     setDueDate("");
+    setPreferredStartDate("");
     setEstimatedMinutes(30);
     setWeight("medium");
     setDeadlineStrictness("hard");
@@ -64,6 +66,7 @@ export function AddWorkItemModal({ open, onClose, onSubmit, kindOptions }: AddWo
       title: title.trim(),
       subject: subject.trim() || undefined,
       dueDate: `${dueDate}T23:59`,
+      preferredStartDate: preferredStartDate || undefined,
       estimatedMinutes,
       weight,
       deadlineStrictness,
@@ -113,6 +116,14 @@ export function AddWorkItemModal({ open, onClose, onSubmit, kindOptions }: AddWo
             onChange={(e) => setEstimatedMinutes(Number(e.target.value))}
           />
         </div>
+
+        <Input
+          label="Start no earlier than (optional)"
+          type="date"
+          value={preferredStartDate}
+          max={dueDate || undefined}
+          onChange={(e) => setPreferredStartDate(e.target.value)}
+        />
 
         {workTypeOptions.length > 1 && (
           <div className="flex flex-col gap-1.5">

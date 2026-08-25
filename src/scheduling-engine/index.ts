@@ -5,13 +5,21 @@
  *
  * See ./README.md for the module's responsibilities and Phase 2 status.
  */
-export { generateSchedule, replan, scheduleTask, detectOverload } from "./scheduler";
+export { generateSchedule, replanRemainingSchedule, scheduleTask, detectOverload } from "./scheduler";
 export { calculatePriority, calculateUrgency, explainPriority, isOverdue } from "./priority";
-export { calculateDailyCapacity, calculateFeedbackAdjustment } from "./capacity";
-export { findAvailableWindows } from "./availability";
+export {
+  calculateDailyCapacity,
+  calculateFeedbackAdjustment,
+  calculateBreakPreferenceAdjustment,
+  calculateFreeTimePriorityAdjustment,
+} from "./capacity";
+export { findAvailableWindows, subtractIntervals } from "./availability";
 export { splitTask, sessionBounds, isSplittableWorkType } from "./splitting";
+export { calculateWorkloadStatus } from "./workload-status";
+export { minutesOfDay, formatMinutesAsHoursMinutes, blockDurationMinutes, toDateOnly } from "./date-utils";
 
 export type {
+  DailyForecastEntry,
   EstimateAccuracySample,
   GenerateScheduleInput,
   GenerateScheduleResult,
@@ -20,6 +28,7 @@ export type {
   SchedulableWorkItem,
   ScheduleWarning,
   WorkAheadSuggestion,
+  WorkloadStatus,
 } from "./types";
 export type { TimeWindow } from "./availability";
 export type { DaySlot, PlannedChunk } from "./splitting";

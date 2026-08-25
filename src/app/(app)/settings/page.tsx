@@ -1,16 +1,41 @@
 "use client";
 
+import { useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { AddCommitmentModal } from "@/components/tasks/AddCommitmentModal";
 import { useAppData } from "@/lib/data/store";
-import type { BreakPreference, FreeTimePriority, WorkStyle, WorkloadTolerance } from "@/types/models";
+import type { BreakPreference, Commitment, FreeTimePriority, WorkStyle, WorkloadTolerance } from "@/types/models";
 
 const selectClassName =
   "h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent";
 
+const CATEGORY_LABEL: Record<Commitment["category"], string> = {
+  school: "School",
+  sports: "Sports",
+  club: "Club",
+  work: "Work",
+  family: "Family",
+  appointment: "Appointment",
+  other: "Other",
+};
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function scheduleSummary(commitment: Commitment): string {
+  const time = `${commitment.startTime}–${commitment.endTime}`;
+  if (commitment.recurrence.type === "weekly") {
+    return `${commitment.recurrence.daysOfWeek.map((d) => DAY_LABELS[d]).join(", ")} · ${time}`;
+  }
+  return `${commitment.recurrence.date} · ${time}`;
+}
+
 export default function SettingsPage() {
-  const { planningProfile, updatePlanningProfile } = useAppData();
+  const { planningProfile, updatePlanningProfile, commitments, addCommitment, removeCommitment } = useAppData();
+  const [commitmentModalOpen, setCommitmentModalOpen] = useState(false);
 
   return (
     <div>
@@ -106,6 +131,36 @@ export default function SettingsPage() {
         </section>
 
         <section className="rounded-lg border border-border bg-surface p-5">
+          <div className="mb-1 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-ink">Commitments</h2>
+            <Button size="sm" onClick={() => setCommitmentModalOpen(true)}>Add commitment</Button>
+          </div>
+          <p className="mb-4 text-xs text-ink-faint">
+            Fixed time the scheduler will never place work over — practice, clubs, work shifts, family time, appointments.
+          </p>
+          {commitments.length === 0 ? (
+            <EmptyState title="No commitments yet" description="Add one so the scheduler knows when you're already busy." />
+          ) : (
+            <ul className="flex flex-col divide-y divide-border">
+              {commitments.map((c) => (
+                <li key={c.id} className="flex items-center justify-between gap-3 py-3">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-ink">{c.title}</span>
+                      <Badge tone="neutral">{CATEGORY_LABEL[c.category]}</Badge>
+                    </div>
+                    <span className="text-xs text-ink-muted">{scheduleSummary(c)}</span>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => removeCommitment(c.id)}>
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="rounded-lg border border-border bg-surface p-5">
           <h2 className="mb-1 text-sm font-semibold text-ink">Connections</h2>
           <p className="mb-4 text-xs text-ink-faint">
             Google Classroom import is planned for a future phase and is not available yet.
@@ -115,6 +170,8 @@ export default function SettingsPage() {
           </Button>
         </section>
       </div>
+
+      <AddCommitmentModal open={commitmentModalOpen} onClose={() => setCommitmentModalOpen(false)} onSubmit={addCommitment} />
     </div>
   );
 }

@@ -54,6 +54,13 @@ interface WorkItemBase {
    * work default to splittable, single-sitting homework does not.
    */
   splittable?: boolean;
+  /**
+   * Optional student-set "don't start before this date" hint (Phase 3A). Purely a scheduling
+   * constraint — it never changes priority or urgency, it just excludes earlier dates from the
+   * item's schedulable window (e.g. a project the student doesn't want to think about until
+   * next week, even though there'd be room to start it sooner).
+   */
+  preferredStartDate?: string; // ISO date ("YYYY-MM-DD")
 }
 
 export type WorkItemStatus = "not-started" | "in-progress" | "completed";
@@ -115,7 +122,7 @@ export interface Commitment {
   id: string;
   userId: string;
   title: string;
-  category: "extracurricular" | "work" | "family" | "personal" | "other";
+  category: "school" | "sports" | "club" | "work" | "family" | "appointment" | "other";
   /** Recurring weekly commitments (e.g. practice every Tuesday) vs one-off events. */
   recurrence: CommitmentRecurrence;
   startTime: string; // ISO date-time for one-off, or HH:mm for recurring
@@ -167,6 +174,26 @@ export interface WorkSession {
   minutesSpent?: number;
   /** True if the student postponed/skipped the originally planned session rather than completing it. */
   postponed?: boolean;
+  /**
+   * Lightweight post-session feedback on the estimate (Phase 3A, Part 5) — feeds
+   * estimate-vs-actual insights. Not used for any learning/ML, just recorded.
+   */
+  estimateFeedback?: "much-faster" | "about-right" | "took-longer";
+}
+
+/**
+ * A single in-progress work session (Phase 3A, Part 4). At most one is active at a time — this
+ * is intentionally not a full timer app, just enough to record an accurate start time so
+ * "actual minutes spent" doesn't have to be hand-estimated after the fact. `blockId` is absent
+ * for an ad-hoc session started directly from a work-ahead/review suggestion rather than a
+ * scheduled block.
+ */
+export interface ActiveWorkSession {
+  blockId?: string;
+  workItemId: string;
+  workItemTitle: string;
+  plannedMinutes?: number;
+  startedAt: string; // ISO date-time
 }
 
 /**
@@ -180,6 +207,10 @@ export interface ScheduleFeedback {
   dateRange: { start: string; end: string };
   workloadFeeling: "too-light" | "just-right" | "too-heavy";
   breaksFeeling?: "too-few" | "just-right" | "too-many";
+  /** How much free/protected time the student wants relative to now (Phase 3A check-in). */
+  freeTimeFeeling?: "more" | "about-right" | "less";
+  /** Whether the student would rather work earlier or later in the day (Phase 3A check-in). Recorded for Insights only — not auto-applied, since shifting daily availability windows is a bigger decision than a bounded capacity/preference nudge. */
+  timingFeeling?: "earlier" | "about-right" | "later";
   createdAt: string;
 }
 

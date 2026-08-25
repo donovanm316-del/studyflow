@@ -73,3 +73,20 @@ export function parseLocal(isoLike: string): Date {
   const [h, min] = timePart.split(":").map(Number);
   return new Date(y, m - 1, d, h, min);
 }
+
+/** "7h 20m" / "2h" / "45m" / "0m" — the human-readable duration format used across Phase 3A UI. */
+export function formatMinutesAsHoursMinutes(totalMinutes: number): string {
+  const rounded = Math.max(0, Math.round(totalMinutes));
+  const h = Math.floor(rounded / 60);
+  const m = rounded % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+/** Duration in minutes between two "HH:mm" (or "...THH:mm") time values on the same day. */
+export function blockDurationMinutes(startIso: string, endIso: string): number {
+  const start = minutesOfDay(startIso.split("T")[1] ?? startIso);
+  const end = minutesOfDay(endIso.split("T")[1] ?? endIso);
+  return end - start;
+}

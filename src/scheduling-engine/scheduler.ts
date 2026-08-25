@@ -23,8 +23,10 @@ import { calculateDailyCapacity, calculateFeedbackAdjustment } from "./capacity"
 import { findAvailableWindows, subtractIntervals, type TimeWindow } from "./availability";
 import { calculatePriority, explainPriority } from "./priority";
 import { isSplittableWorkType, sessionBounds, splitTask, type DaySlot, type PlannedChunk } from "./splitting";
-import { combineDateAndMinutes, dateRange, diffInDays, toDateOnly } from "./date-utils";
+import { blockDurationMinutes, combineDateAndMinutes, dateRange, diffInDays, toDateOnly } from "./date-utils";
+import { calculateWorkloadStatus } from "./workload-status";
 import type {
+  DailyForecastEntry,
   GenerateScheduleInput,
   GenerateScheduleResult,
   PriorityBreakdown,
@@ -71,7 +73,18 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
       diffInDays(now, item.dueDate) <= WORK_AHEAD_HORIZON_DAYS
   );
 
-  const remainingOf = (item: SchedulableWorkItem) => Math.max(0, item.estimatedMinutes - (item.actualMinutes ?? 0));
+  // Minutes already committed to a manual-override block that hasn't been completed yet must not
+  // be counted as "still needing to be scheduled" — otherwise moving a session (Part 14) doesn't
+  // reduce what the engine thinks is left, and the same work gets placed a second time elsewhere.
+  const manualMinutesByItem = new Map<string, number>();
+  for (const block of preservedBlocks) {
+    if (block.origin === "manual-override" && block.status === "planned" && block.workItemId) {
+      const duration = blockDurationMinutes(block.start, block.end);
+      manualMinutesByItem.set(block.workItemId, (manualMinutesByItem.get(block.workItemId) ?? 0) + duration);
+    }
+  }
+  const remainingOf = (item: SchedulableWorkItem) =>
+    Math.max(0, item.estimatedMinutes - (item.actualMinutes ?? 0) - (manualMinutesByItem.get(item.id) ?? 0));
 
   const isBehind = inRange.some((item) => diffInDays(now, item.dueDate) <= 0 && remainingOf(item) > 0);
   const relevantRigors: CourseRigor[] = inRange
@@ -117,11 +130,13 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
       return a.item.id < b.item.id ? -1 : 1;
     });
 
-  const totalAvailableMinutes = dates.reduce((sum, date) => {
+  const availableMinutesByDate = new Map<string, number>();
+  for (const date of dates) {
     const state = dayState.get(date)!;
     const windowMinutes = state.windows.reduce((s, w) => s + (w.endMinute - w.startMinute), 0);
-    return sum + Math.min(windowMinutes, dailyCapacityMinutes);
-  }, 0);
+    availableMinutesByDate.set(date, Math.min(windowMinutes, dailyCapacityMinutes));
+  }
+  const totalAvailableMinutes = [...availableMinutesByDate.values()].reduce((sum, m) => sum + m, 0);
 
   const newBlocks: ScheduleBlock[] = [];
   const breakEntries: PlannedChunk[] = [];
@@ -136,7 +151,21 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     // Otherwise the item is schedulable up to whichever comes first: its due date or the range end.
     const endDate = isOverdueItem || dueDateOnly < startDate ? rangeEnd : dueDateOnly < rangeEnd ? dueDateOnly : rangeEnd;
 
-    const orderedDates = dateRange(startDate, endDate);
+    // A student-set "don't start before this date" hint (Part 10) narrows the window further,
+    // but never past today — it's a soft preference about when to *begin*, not a way to push
+    // overdue or already-behind work later than it already is.
+    const effectiveStart =
+      item.preferredStartDate && item.preferredStartDate > startDate && item.preferredStartDate <= endDate
+        ? item.preferredStartDate
+        : startDate;
+
+    let orderedDates = dateRange(effectiveStart, endDate);
+    // A test/quiz is prep work for something that happens ON the due date — the due date itself
+    // isn't a day left to study, so it's excluded from the schedulable window (Part 11). Guarded
+    // so it never empties the window entirely when the due date is the only day available.
+    if ((item.kind === "test" || item.kind === "quiz") && orderedDates.length > 1) {
+      orderedDates = orderedDates.filter((d) => d !== dueDateOnly);
+    }
     if (planningProfile.workStyle === "deadline_driven") orderedDates.reverse();
 
     const leftover = scheduleTask(item, remainingMinutes, {
@@ -190,19 +219,41 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
 
   const commitmentBlocks = materializeCommitmentBlocks(userId, dates, commitments);
 
-  const warnings: ScheduleWarning[] = [
-    ...detectOverload(schedulable, totalAvailableMinutes),
-    ...hardDeadlineWarning(schedulable, unscheduledWorkItemIds),
-  ];
+  const hardDeadlineWarnings = hardDeadlineWarning(schedulable, unscheduledWorkItemIds);
+  const warnings: ScheduleWarning[] = [...detectOverload(schedulable, totalAvailableMinutes), ...hardDeadlineWarnings];
 
   const caughtUp = !isBehind && unscheduledWorkItemIds.length === 0;
   const workAheadSuggestions = caughtUp ? buildWorkAheadSuggestions(outOfRangeSoon, now) : [];
+  const workloadStatus = calculateWorkloadStatus(schedulable, totalAvailableMinutes, hardDeadlineWarnings.length > 0);
+
+  const workMinutesByDate = new Map<string, number>();
+  for (const block of newBlocks) {
+    if (!block.workItemId) continue; // breaks don't count as workload
+    const date = toDateOnly(block.start);
+    const duration = blockDurationMinutes(block.start, block.end);
+    workMinutesByDate.set(date, (workMinutesByDate.get(date) ?? 0) + duration);
+  }
+  const dailyForecast: DailyForecastEntry[] = dates.map((date) => ({
+    date,
+    workMinutes: workMinutesByDate.get(date) ?? 0,
+    availableMinutes: availableMinutesByDate.get(date) ?? 0,
+  }));
 
   const blocks = [...preservedBlocks, ...commitmentBlocks, ...newBlocks].sort((a, b) =>
     a.start < b.start ? -1 : a.start > b.start ? 1 : 0
   );
 
-  return { blocks, unscheduledWorkItemIds, priorities, warnings, caughtUp, workAheadSuggestions, feedbackAdjustment };
+  return {
+    blocks,
+    unscheduledWorkItemIds,
+    priorities,
+    warnings,
+    caughtUp,
+    workAheadSuggestions,
+    feedbackAdjustment,
+    workloadStatus,
+    dailyForecast,
+  };
 }
 
 interface ScheduleTaskContext {
@@ -383,7 +434,11 @@ function hardDeadlineWarning(
 }
 
 function buildWorkAheadSuggestions(candidates: SchedulableWorkItem[], now: string): WorkAheadSuggestion[] {
-  const meaningful = candidates.filter((c) => c.kind === "test" || c.kind === "project" || c.workType === "essay");
+  // Tests/quizzes are suggested as "review" (Part 7: "Review an upcoming test or quiz"); anything
+  // else meaningful (projects, essays, other long-term work) is suggested as "work ahead".
+  const meaningful = candidates.filter(
+    (c) => c.kind === "test" || c.kind === "quiz" || c.kind === "project" || c.workType === "essay" || c.workType === "long-term"
+  );
   const scored = meaningful
     .map((item) => ({ item, breakdown: calculatePriority(item, { now, remainingMinutes: item.estimatedMinutes }) }))
     .sort((a, b) => b.breakdown.score - a.breakdown.score)
@@ -391,11 +446,12 @@ function buildWorkAheadSuggestions(candidates: SchedulableWorkItem[], now: strin
 
   return scored.map(({ item }) => {
     const days = Math.max(1, Math.round(diffInDays(now, item.dueDate)));
-    return {
-      workItemId: item.id,
-      title: item.title,
-      reason: `You're caught up — "${item.title}" is due in ${days} days and could use a head start if you'd like to work ahead.`,
-    };
+    const type: WorkAheadSuggestion["type"] = item.kind === "test" || item.kind === "quiz" ? "review" : "work-ahead";
+    const reason =
+      type === "review"
+        ? `You're caught up — "${item.title}" is in ${days} days and a little review now could take pressure off later.`
+        : `You're caught up — "${item.title}" is due in ${days} days and could use a head start if you'd like to work ahead.`;
+    return { workItemId: item.id, title: item.title, reason, type };
   });
 }
 
@@ -427,11 +483,16 @@ function materializeCommitmentBlocks(
 }
 
 /**
- * Recomputes the schedule after something changes, keeping completed/skipped/manually-moved
- * blocks fixed and regenerating everything else. Returns the full result (not just blocks) —
- * an intentional expansion of the Phase 1A stub signature, since the UI needs the same
- * warnings/priority context here as it does from a fresh `generateSchedule` call.
+ * Recomputes the *entire remaining* schedule after something changes — a skipped session, a new
+ * item, a changed due date (Phase 3A, Part 1) — rather than just relocating whatever triggered
+ * the change. This is not a separate algorithm: `generateSchedule` already rebuilds every
+ * non-fixed block from scratch on every call (only completed/skipped/manually-overridden blocks
+ * are held fixed, via `preservedBlocks` above), so marking one block skipped and calling this
+ * again naturally reflows everything else around the new capacity/availability picture — a big
+ * item can shift into room freed up by the skip, not just get pushed to tomorrow. `reason` is
+ * primarily documentation for the caller about *why* a replan was triggered (the UI already
+ * knows and explains this to the student); it isn't consumed by the algorithm itself.
  */
-export function replan(input: ReplanInput): GenerateScheduleResult {
+export function replanRemainingSchedule(input: ReplanInput): GenerateScheduleResult {
   return generateSchedule(input);
 }

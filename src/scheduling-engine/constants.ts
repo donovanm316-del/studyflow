@@ -159,3 +159,12 @@ export const WORK_AHEAD_HORIZON_DAYS = 14;
 export const FEEDBACK_STREAK_LENGTH = 2;
 export const FEEDBACK_ADJUSTMENT_DECREASE = 0.85;
 export const FEEDBACK_ADJUSTMENT_INCREASE = 1.15;
+
+/**
+ * Thresholds for `calculateWorkloadStatus` (Phase 3A, Part 6), expressed as
+ * estimatedRemainingMinutes / availableMinutes. Chosen so the spec's own worked example
+ * (7h20m remaining, 9h available → ratio ≈0.81) lands on "on-track" ("could reasonably be ON
+ * TRACK") while (7h20m remaining, 4h30m available → ratio ≈1.63) lands on "at-risk".
+ */
+export const WORKLOAD_STATUS_ON_TRACK_MAX_RATIO = 0.85;
+export const WORKLOAD_STATUS_GETTING_TIGHT_MAX_RATIO = 1.0;

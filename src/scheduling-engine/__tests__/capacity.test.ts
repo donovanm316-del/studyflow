@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { calculateDailyCapacity, calculateFeedbackAdjustment } from "../capacity";
+import {
+  calculateBreakPreferenceAdjustment,
+  calculateDailyCapacity,
+  calculateFeedbackAdjustment,
+  calculateFreeTimePriorityAdjustment,
+} from "../capacity";
 import { MAX_DAILY_CAPACITY_MINUTES } from "../constants";
 import { makeFeedback, makePlanningProfile } from "./fixtures";
 
@@ -79,5 +84,63 @@ describe("calculateFeedbackAdjustment", () => {
       feedbackAdjustment: calculateFeedbackAdjustment(history),
     });
     expect(capacity).toBeLessThanOrEqual(MAX_DAILY_CAPACITY_MINUTES.moderate);
+  });
+});
+
+describe("calculateBreakPreferenceAdjustment (Phase 3A check-in)", () => {
+  it("keeps the current preference with fewer than two answered responses", () => {
+    expect(calculateBreakPreferenceAdjustment([], "balanced")).toBe("balanced");
+    const one = [makeFeedback("just-right", "2026-08-24T00:00:00.000Z", { breaksFeeling: "too-many" })];
+    expect(calculateBreakPreferenceAdjustment(one, "balanced")).toBe("balanced");
+  });
+
+  it("steps one notch toward fewer breaks after two consecutive 'too-many' answers", () => {
+    const history = [
+      makeFeedback("just-right", "2026-08-17T00:00:00.000Z", { breaksFeeling: "too-many" }),
+      makeFeedback("just-right", "2026-08-24T00:00:00.000Z", { breaksFeeling: "too-many" }),
+    ];
+    expect(calculateBreakPreferenceAdjustment(history, "balanced")).toBe("minimal");
+  });
+
+  it("steps one notch toward more breaks after two consecutive 'too-few' answers", () => {
+    const history = [
+      makeFeedback("just-right", "2026-08-17T00:00:00.000Z", { breaksFeeling: "too-few" }),
+      makeFeedback("just-right", "2026-08-24T00:00:00.000Z", { breaksFeeling: "too-few" }),
+    ];
+    expect(calculateBreakPreferenceAdjustment(history, "balanced")).toBe("frequent");
+  });
+
+  it("clamps at the ends of the scale instead of erroring", () => {
+    const history = [
+      makeFeedback("just-right", "2026-08-17T00:00:00.000Z", { breaksFeeling: "too-many" }),
+      makeFeedback("just-right", "2026-08-24T00:00:00.000Z", { breaksFeeling: "too-many" }),
+    ];
+    expect(calculateBreakPreferenceAdjustment(history, "minimal")).toBe("minimal");
+  });
+
+  it("does not react to a mixed streak", () => {
+    const history = [
+      makeFeedback("just-right", "2026-08-17T00:00:00.000Z", { breaksFeeling: "too-many" }),
+      makeFeedback("just-right", "2026-08-24T00:00:00.000Z", { breaksFeeling: "too-few" }),
+    ];
+    expect(calculateBreakPreferenceAdjustment(history, "balanced")).toBe("balanced");
+  });
+});
+
+describe("calculateFreeTimePriorityAdjustment (Phase 3A check-in)", () => {
+  it("steps toward 'high' after two consecutive 'more' answers", () => {
+    const history = [
+      makeFeedback("just-right", "2026-08-17T00:00:00.000Z", { freeTimeFeeling: "more" }),
+      makeFeedback("just-right", "2026-08-24T00:00:00.000Z", { freeTimeFeeling: "more" }),
+    ];
+    expect(calculateFreeTimePriorityAdjustment(history, "medium")).toBe("high");
+  });
+
+  it("steps toward 'low' after two consecutive 'less' answers", () => {
+    const history = [
+      makeFeedback("just-right", "2026-08-17T00:00:00.000Z", { freeTimeFeeling: "less" }),
+      makeFeedback("just-right", "2026-08-24T00:00:00.000Z", { freeTimeFeeling: "less" }),
+    ];
+    expect(calculateFreeTimePriorityAdjustment(history, "medium")).toBe("low");
   });
 });

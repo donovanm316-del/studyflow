@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ScheduleBlockCard } from "@/components/schedule/ScheduleBlockCard";
+import { WorkloadStatusBadge } from "@/components/schedule/WorkloadStatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -10,7 +11,29 @@ import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
 import { blockCardKind, formatTimeRange } from "@/lib/schedule-format";
 import { currentWeekRange, todayDateOnly } from "@/lib/now";
-import type { ScheduleBlock } from "@/types/models";
+import { minutesOfDay, subtractIntervals, type TimeWindow } from "@/scheduling-engine";
+import type { ScheduleBlock, WorkSession } from "@/types/models";
+
+type CompletionStep =
+  | { stage: "minutes"; source: { kind: "block"; block: ScheduleBlock } | { kind: "adhoc" }; minutes: number }
+  | {
+      stage: "feeling";
+      source: { kind: "block"; block: ScheduleBlock } | { kind: "adhoc" };
+      minutes: number;
+    };
+
+/** Only ever called from event handlers or effect callbacks, never during render — see the
+ *  `liveElapsedMinutes` state below, which is what render actually reads. */
+function computeElapsedMinutes(startedAt: string): number {
+  return Math.max(0, Math.round((Date.now() - new Date(startedAt).getTime()) / 60_000));
+}
+
+function formatClockTime(isoDateTime: string): string {
+  const [h, m] = isoDateTime.split("T")[1].split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${m.toString().padStart(2, "0")} ${period}`;
+}
 
 export default function TodayPage() {
   const today = todayDateOnly();
@@ -19,10 +42,57 @@ export default function TodayPage() {
   // surface work whose due date is today or already overdue.
   const { start, end } = currentWeekRange();
   const result = useSchedule(start, end);
-  const { completeBlock, skipBlock, moveBlock } = useAppData();
-  const [completing, setCompleting] = useState<{ block: ScheduleBlock; minutes: number } | null>(null);
+  const {
+    planningProfile,
+    activeSession,
+    completeBlock,
+    moveBlock,
+    replanRemainingToday,
+    startSession,
+    startAdHocSession,
+    cancelActiveSession,
+    completeAdHocSession,
+  } = useAppData();
 
-  const todaysBlocks = result.blocks.filter((b) => b.start.slice(0, 10) === today);
+  const [completion, setCompletion] = useState<CompletionStep | null>(null);
+  const [chooserBlockId, setChooserBlockId] = useState<string | null>(null);
+  const [replanNotice, setReplanNotice] = useState<string | null>(null);
+  // Wall-clock reads (Date.now()) must happen in an effect, not during render — this keeps the
+  // "N min so far" display live (refreshed every 30s) without the render function itself being
+  // impure. `elapsedMinutesRef` (via callback below) is only ever read from event handlers.
+  const [liveElapsedMinutes, setLiveElapsedMinutes] = useState(0);
+
+  useEffect(() => {
+    if (!activeSession) return;
+    const update = () => setLiveElapsedMinutes(computeElapsedMinutes(activeSession.startedAt));
+    update();
+    const id = setInterval(update, 30_000);
+    return () => clearInterval(id);
+  }, [activeSession]);
+
+  const todaysBlocks = result.blocks.filter((b) => b.start.slice(0, 10) === today && b.status !== "skipped");
+
+  const dow = (() => {
+    const [y, m, d] = today.split("-").map(Number);
+    return new Date(y, m - 1, d).getDay();
+  })();
+  const availability = planningProfile.dailyAvailability.find((a) => a.dayOfWeek === dow);
+  const dayWindow: TimeWindow | null = availability
+    ? { startMinute: minutesOfDay(availability.earliest), endMinute: minutesOfDay(availability.latest) }
+    : null;
+  const busy: TimeWindow[] = todaysBlocks.map((b) => ({
+    startMinute: minutesOfDay(b.start.split("T")[1]),
+    endMinute: minutesOfDay(b.end.split("T")[1]),
+  }));
+  const freeWindows = dayWindow ? subtractIntervals(dayWindow, busy).filter((w) => w.endMinute - w.startMinute >= 15) : [];
+
+  type Entry =
+    | { key: string; startMinute: number; kind: "block"; block: ScheduleBlock }
+    | { key: string; startMinute: number; kind: "free"; window: TimeWindow };
+  const entries: Entry[] = [
+    ...todaysBlocks.map((b) => ({ key: b.id, startMinute: minutesOfDay(b.start.split("T")[1]), kind: "block" as const, block: b })),
+    ...freeWindows.map((w, i) => ({ key: `free-${i}`, startMinute: w.startMinute, kind: "free" as const, window: w })),
+  ].sort((a, b) => a.startMinute - b.startMinute);
 
   function plannedMinutes(block: ScheduleBlock): number {
     const [sh, sm] = block.start.split("T")[1].split(":").map(Number);
@@ -39,17 +109,46 @@ export default function TodayPage() {
       return `${nextDate}T${time}`;
     };
     moveBlock(block, shift(block.start), shift(block.end));
+    setChooserBlockId(null);
+    setReplanNotice(`Moved "${block.title}" to tomorrow.`);
   }
+
+  function doReplanRemainingToday(block: ScheduleBlock) {
+    replanRemainingToday(block);
+    setChooserBlockId(null);
+    setReplanNotice("Your remaining schedule for today has been recalculated.");
+  }
+
+  function beginFinish(source: CompletionStep["source"], defaultMinutes: number) {
+    setCompletion({ stage: "minutes", source, minutes: defaultMinutes });
+  }
+
+  function confirmMinutes() {
+    if (!completion) return;
+    setCompletion({ ...completion, stage: "feeling" });
+  }
+
+  function finalizeCompletion(estimateFeedback?: WorkSession["estimateFeedback"]) {
+    if (!completion) return;
+    if (completion.source.kind === "block") {
+      completeBlock(completion.source.block, completion.minutes, estimateFeedback);
+    } else {
+      completeAdHocSession(completion.minutes, estimateFeedback);
+    }
+    setCompletion(null);
+  }
+
+  const workAhead = result.workAheadSuggestions.filter((s) => s.type === "work-ahead");
+  const review = result.workAheadSuggestions.filter((s) => s.type === "review");
+  const showCaughtUpPanel = result.caughtUp && todaysBlocks.filter((b) => b.origin === "generated").length === 0;
 
   return (
     <div>
-      <PageHeader title="Today" description="Your generated plan for today, from the scheduling engine." />
+      <PageHeader title="Today" description="Your day, as a timeline — fixed commitments, work sessions, breaks, and free time." />
 
-      {result.caughtUp && todaysBlocks.filter((b) => b.origin === "generated").length === 0 && (
-        <div className="mb-4 rounded-md border border-success-soft bg-success-soft px-4 py-3 text-sm text-success">
-          You&apos;re caught up — no work is required today beyond what&apos;s already planned.
-        </div>
-      )}
+      <div className="mb-4">
+        <WorkloadStatusBadge status={result.workloadStatus} />
+      </div>
 
       {result.warnings.map((w) => (
         <div key={w.kind} className="mb-4 rounded-md border border-warning-soft bg-warning-soft px-4 py-3 text-sm text-warning">
@@ -57,65 +156,182 @@ export default function TodayPage() {
         </div>
       ))}
 
+      {replanNotice && (
+        <div className="mb-4 flex items-center justify-between gap-2 rounded-md border border-brand-soft bg-brand-soft px-4 py-3 text-sm text-brand-strong">
+          <span>{replanNotice}</span>
+          <button onClick={() => setReplanNotice(null)} aria-label="Dismiss" className="text-brand-strong hover:opacity-70">✕</button>
+        </div>
+      )}
+
+      {activeSession && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-brand bg-brand-soft px-4 py-3">
+          <div>
+            <p className="text-sm font-medium text-ink">Working on &ldquo;{activeSession.workItemTitle}&rdquo;</p>
+            <p className="text-xs text-ink-muted">
+              Started at {formatClockTime(activeSession.startedAt)} · {liveElapsedMinutes} min so far
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                const activeBlock = activeSession.blockId ? result.blocks.find((b) => b.id === activeSession.blockId) : undefined;
+                beginFinish(
+                  activeBlock ? { kind: "block", block: activeBlock } : { kind: "adhoc" },
+                  computeElapsedMinutes(activeSession.startedAt) || 1
+                );
+              }}
+            >
+              Finish
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancelActiveSession}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {showCaughtUpPanel && (
+        <div className="mb-4 rounded-md border border-success-soft bg-success-soft px-4 py-3 text-sm text-success">
+          <p className="font-medium">You&apos;re caught up — no work is required today beyond what&apos;s already planned.</p>
+          {(workAhead.length > 0 || review.length > 0) && (
+            <div className="mt-3 flex flex-col gap-2">
+              {review.map((s) => (
+                <div key={s.workItemId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success-soft bg-surface px-3 py-2">
+                  <span className="text-sm text-ink">{s.reason}</span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={!!activeSession}
+                    onClick={() => startAdHocSession(s.workItemId, `Review: ${s.title}`)}
+                  >
+                    Review now
+                  </Button>
+                </div>
+              ))}
+              {workAhead.map((s) => (
+                <div key={s.workItemId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success-soft bg-surface px-3 py-2">
+                  <span className="text-sm text-ink">{s.reason}</span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={!!activeSession}
+                    onClick={() => startAdHocSession(s.workItemId, s.title)}
+                  >
+                    Work ahead
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-3 text-xs text-success">
+            Or just keep this time free — nothing here is required.
+          </p>
+        </div>
+      )}
+
       <section className="rounded-lg border border-border bg-surface p-5">
-        {todaysBlocks.length === 0 ? (
+        {entries.length === 0 ? (
           <EmptyState title="Nothing scheduled today" description="Add assignments, tests, or commitments to generate a plan." />
         ) : (
           <div className="flex flex-col gap-2">
-            {todaysBlocks.map((block) => {
+            {entries.map((entry) => {
+              if (entry.kind === "free") {
+                return (
+                  <ScheduleBlockCard
+                    key={entry.key}
+                    title="Free time"
+                    timeLabel={`${minutesLabel(entry.window.startMinute)} – ${minutesLabel(entry.window.endMinute)}`}
+                    kind="free"
+                  />
+                );
+              }
+
+              const block = entry.block;
               const isWork = block.origin === "generated" || block.origin === "manual-override";
+              const isActive = activeSession?.blockId === block.id;
+              const isChoosing = chooserBlockId === block.id;
+
               return (
-                <ScheduleBlockCard
-                  key={block.id}
-                  title={block.title}
-                  timeLabel={formatTimeRange(block)}
-                  kind={blockCardKind(block)}
-                  status={block.status}
-                  reason={block.reason}
-                  actions={
-                    isWork && block.status === "planned" ? (
-                      <div className="flex shrink-0 gap-1">
-                        <Button size="sm" variant="secondary" onClick={() => setCompleting({ block, minutes: plannedMinutes(block) })}>
-                          Done
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => moveToTomorrow(block)}>
-                          Move to tomorrow
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => skipBlock(block)}>
-                          Skip
-                        </Button>
-                      </div>
-                    ) : undefined
-                  }
-                />
+                <div key={block.id} className="flex flex-col gap-2">
+                  <ScheduleBlockCard
+                    title={block.title}
+                    timeLabel={formatTimeRange(block)}
+                    kind={blockCardKind(block)}
+                    status={block.status}
+                    reason={block.reason}
+                    actions={
+                      isWork && block.status === "planned" && !isActive ? (
+                        <div className="flex shrink-0 flex-wrap items-center gap-1">
+                          <Button size="sm" disabled={!!activeSession} onClick={() => startSession(block)}>
+                            Start
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => beginFinish({ kind: "block", block }, plannedMinutes(block))}>
+                            Log without timer
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setChooserBlockId(isChoosing ? null : block.id)}>
+                            Can&apos;t do this today
+                          </Button>
+                        </div>
+                      ) : isWork && isActive ? (
+                        <span className="shrink-0 text-xs font-medium text-brand">Working…</span>
+                      ) : undefined
+                    }
+                  />
+                  {isChoosing && (
+                    <div className="ml-2 flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border-strong bg-paper px-3 py-2">
+                      <span className="text-xs text-ink-muted">What should happen to &ldquo;{block.title}&rdquo;?</span>
+                      <Button size="sm" variant="secondary" onClick={() => moveToTomorrow(block)}>
+                        Move just this session to tomorrow
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => doReplanRemainingToday(block)}>
+                        Re-plan the rest of today
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setChooserBlockId(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
         )}
       </section>
 
-      {completing && (
-        <div className="mt-4 flex items-end gap-3 rounded-lg border border-border bg-surface p-4">
+      {completion?.stage === "minutes" && (
+        <div className="mt-4 flex flex-wrap items-end gap-3 rounded-lg border border-border bg-surface p-4">
           <Input
-            label={`Actual minutes spent on "${completing.block.title}"`}
+            label="Actual minutes spent"
             type="number"
             min={1}
-            value={completing.minutes}
-            onChange={(e) => setCompleting({ ...completing, minutes: Number(e.target.value) })}
+            value={completion.minutes}
+            onChange={(e) => setCompletion({ ...completion, minutes: Number(e.target.value) })}
           />
-          <Button
-            onClick={() => {
-              completeBlock(completing.block, completing.minutes);
-              setCompleting(null);
-            }}
-          >
-            Confirm
-          </Button>
-          <Button variant="ghost" onClick={() => setCompleting(null)}>
-            Cancel
-          </Button>
+          <Button onClick={confirmMinutes}>Continue</Button>
+          <Button variant="ghost" onClick={() => setCompletion(null)}>Cancel</Button>
+        </div>
+      )}
+
+      {completion?.stage === "feeling" && (
+        <div className="mt-4 rounded-lg border border-border bg-surface p-4">
+          <p className="mb-3 text-sm font-medium text-ink">How did that estimate feel?</p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" onClick={() => finalizeCompletion("much-faster")}>Much faster than expected</Button>
+            <Button size="sm" variant="secondary" onClick={() => finalizeCompletion("about-right")}>About right</Button>
+            <Button size="sm" variant="secondary" onClick={() => finalizeCompletion("took-longer")}>Took longer than expected</Button>
+            <Button size="sm" variant="ghost" onClick={() => finalizeCompletion(undefined)}>Skip</Button>
+          </div>
         </div>
       )}
     </div>
   );
+}
+
+function minutesLabel(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${m.toString().padStart(2, "0")} ${period}`;
 }

@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 export interface ScheduleBlockCardProps {
   title: string;
   timeLabel: string;
-  kind: "assignment" | "test" | "quiz" | "project" | "commitment" | "break";
+  kind: "assignment" | "test" | "quiz" | "project" | "commitment" | "break" | "free";
   status?: "planned" | "completed" | "skipped";
   /** Short explanation of why this was scheduled here (from `explainPriority`), shown as a subtitle. */
   reason?: string;
@@ -19,6 +19,7 @@ const kindClasses: Record<ScheduleBlockCardProps["kind"], string> = {
   project: "border-l-success",
   commitment: "border-l-ink-faint",
   break: "border-l-border-strong",
+  free: "border-l-border border-dashed bg-transparent",
 };
 
 /** A single scheduled block, as placed by the scheduling engine. */
@@ -35,7 +36,13 @@ export function ScheduleBlockCard({ title, timeLabel, kind, status = "planned", 
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col gap-0.5">
-          <span className={cn("text-sm font-medium text-ink", status === "completed" && "line-through")}>
+          <span
+            className={cn(
+              "text-sm font-medium text-ink",
+              status === "completed" && "line-through",
+              kind === "free" && "italic text-ink-faint"
+            )}
+          >
             {title}
           </span>
           <span className="text-xs text-ink-muted">{timeLabel}</span>

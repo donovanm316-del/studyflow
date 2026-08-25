@@ -12,6 +12,14 @@ export interface TaskRowProps {
   className?: string;
   /** When provided, renders a checkbox that toggles complete/incomplete. */
   onToggleComplete?: () => void;
+  /**
+   * Deadline-awareness context (Phase 3A, Part 13) — only rendered when there's something
+   * meaningful to say, and only sourced from real data the caller already computed.
+   */
+  remainingMinutes?: number;
+  plannedSessionCount?: number;
+  /** Hard/important deadline landing very soon — the one case that earns a stronger visual treatment. */
+  urgent?: boolean;
 }
 
 const statusTone: Record<WorkItemStatus, BadgeTone> = {
@@ -36,7 +44,18 @@ export function TaskRow({
   estimatedMinutes,
   className,
   onToggleComplete,
+  remainingMinutes,
+  plannedSessionCount,
+  urgent,
 }: TaskRowProps) {
+  const contextParts: string[] = [];
+  if (remainingMinutes != null && remainingMinutes > 0 && remainingMinutes !== estimatedMinutes) {
+    contextParts.push(`${remainingMinutes} min remaining`);
+  }
+  if (plannedSessionCount != null && plannedSessionCount > 0) {
+    contextParts.push(`${plannedSessionCount} session${plannedSessionCount === 1 ? "" : "s"} planned before deadline`);
+  }
+
   return (
     <div
       className={cn(
@@ -63,10 +82,11 @@ export function TaskRow({
         <div className="flex items-center gap-2 text-xs text-ink-muted">
           {subject && <span>{subject}</span>}
           {subject && <span aria-hidden>·</span>}
-          <span>{dueLabel}</span>
+          <span className={urgent ? "font-medium text-danger" : undefined}>{dueLabel}</span>
           <span aria-hidden>·</span>
           <span>{estimatedMinutes} min</span>
         </div>
+        {contextParts.length > 0 && <p className="text-xs text-ink-faint">{contextParts.join(" · ")}</p>}
       </div>
       <Badge tone={statusTone[status]} className="shrink-0">
         {statusLabel[status]}

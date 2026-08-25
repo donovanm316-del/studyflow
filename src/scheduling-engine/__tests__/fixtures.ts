@@ -89,7 +89,7 @@ export function makeCommitment(overrides: Partial<Commitment> = {}): Commitment 
     id: nextId("c"),
     userId: "u1",
     title: "Commitment",
-    category: "extracurricular",
+    category: "sports",
     recurrence: { type: "weekly", daysOfWeek: [1, 3] },
     startTime: "16:00",
     endTime: "17:30",

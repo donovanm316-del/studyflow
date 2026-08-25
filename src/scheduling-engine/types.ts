@@ -66,6 +66,8 @@ export interface WorkAheadSuggestion {
   workItemId: string;
   title: string;
   reason: string;
+  /** "review" for an upcoming test/quiz, "work-ahead" for a project/essay/long-term item (Part 7). */
+  type: "work-ahead" | "review";
 }
 
 export interface GenerateScheduleResult {
@@ -84,6 +86,10 @@ export interface GenerateScheduleResult {
    * — see `calculateFeedbackAdjustment` in capacity.ts.
    */
   feedbackAdjustment: number;
+  /** On-track / getting-tight / at-risk / ahead, grounded in this same result's numbers (Part 6). */
+  workloadStatus: WorkloadStatus;
+  /** Per-day projected workload vs. available time across the requested range (Part 8). */
+  dailyForecast: DailyForecastEntry[];
 }
 
 /** Input for recomputing a plan after something changes (missed session, new item, moved due date). */
@@ -96,4 +102,25 @@ export interface EstimateAccuracySample {
   workItemId: string;
   estimatedMinutes: number;
   actualMinutes: number;
+}
+
+/**
+ * A reusable "how is the student doing against their real workload" status (Phase 3A, Part 6).
+ * Grounded entirely in the same demand/availability numbers `detectOverload` already computes —
+ * this is a different lens on the same data, not a second competing calculation.
+ */
+export interface WorkloadStatus {
+  level: "ahead" | "on-track" | "getting-tight" | "at-risk";
+  message: string;
+  estimatedRemainingMinutes: number;
+  availableMinutes: number;
+  /** availableMinutes - estimatedRemainingMinutes; negative means demand exceeds availability. */
+  bufferMinutes: number;
+}
+
+/** One day's worth of projected workload vs. available time (Phase 3A, Part 8), from real engine output. */
+export interface DailyForecastEntry {
+  date: string; // "YYYY-MM-DD"
+  workMinutes: number;
+  availableMinutes: number;
 }
