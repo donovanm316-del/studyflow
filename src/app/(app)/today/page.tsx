@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ScheduleBlockCard } from "@/components/schedule/ScheduleBlockCard";
 import { WorkloadStatusBadge } from "@/components/schedule/WorkloadStatusBadge";
@@ -11,7 +11,7 @@ import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
 import { blockCardKind, formatTimeRange } from "@/lib/schedule-format";
 import { currentWeekRange, todayDateOnly } from "@/lib/now";
-import { minutesOfDay, subtractIntervals, type TimeWindow } from "@/scheduling-engine";
+import { diffSchedules, minutesOfDay, subtractIntervals, type ScheduleChangeSummary, type TimeWindow } from "@/scheduling-engine";
 import type { ScheduleBlock, WorkSession } from "@/types/models";
 
 type CompletionStep =
@@ -57,6 +57,15 @@ export default function TodayPage() {
   const [completion, setCompletion] = useState<CompletionStep | null>(null);
   const [chooserBlockId, setChooserBlockId] = useState<string | null>(null);
   const [replanNotice, setReplanNotice] = useState<string | null>(null);
+  const [expandedWhyId, setExpandedWhyId] = useState<string | null>(null);
+  // Captures the schedule right before a replanning action; once the store update lands and
+  // `result` reflects it, this derives the change summary (Phase 3B, Part 6/7). Cleared together
+  // with `replanNotice` when the student dismisses the banner.
+  const [diffBaseline, setDiffBaseline] = useState<ScheduleBlock[] | null>(null);
+  const changeSummary: ScheduleChangeSummary | null = useMemo(
+    () => (diffBaseline ? diffSchedules(diffBaseline, result.blocks) : null),
+    [diffBaseline, result]
+  );
   // Wall-clock reads (Date.now()) must happen in an effect, not during render — this keeps the
   // "N min so far" display live (refreshed every 30s) without the render function itself being
   // impure. `elapsedMinutesRef` (via callback below) is only ever read from event handlers.
@@ -108,12 +117,14 @@ export default function TodayPage() {
       const nextDate = `${next.getFullYear()}-${(next.getMonth() + 1).toString().padStart(2, "0")}-${next.getDate().toString().padStart(2, "0")}`;
       return `${nextDate}T${time}`;
     };
+    setDiffBaseline(result.blocks);
     moveBlock(block, shift(block.start), shift(block.end));
     setChooserBlockId(null);
     setReplanNotice(`Moved "${block.title}" to tomorrow.`);
   }
 
   function doReplanRemainingToday(block: ScheduleBlock) {
+    setDiffBaseline(result.blocks);
     replanRemainingToday(block);
     setChooserBlockId(null);
     setReplanNotice("Your remaining schedule for today has been recalculated.");
@@ -157,9 +168,34 @@ export default function TodayPage() {
       ))}
 
       {replanNotice && (
-        <div className="mb-4 flex items-center justify-between gap-2 rounded-md border border-brand-soft bg-brand-soft px-4 py-3 text-sm text-brand-strong">
-          <span>{replanNotice}</span>
-          <button onClick={() => setReplanNotice(null)} aria-label="Dismiss" className="text-brand-strong hover:opacity-70">✕</button>
+        <div className="mb-4 rounded-md border border-brand-soft bg-brand-soft px-4 py-3 text-sm text-brand-strong">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium">Schedule updated</span>
+            <button
+              onClick={() => {
+                setReplanNotice(null);
+                setDiffBaseline(null);
+              }}
+              aria-label="Dismiss"
+              className="text-brand-strong hover:opacity-70"
+            >
+              ✕
+            </button>
+          </div>
+          <p className="mt-1">{replanNotice}</p>
+          {changeSummary && changeSummary.changes.length > 0 && (
+            <ul className="mt-2 flex flex-col gap-1 border-t border-brand-soft pt-2">
+              {changeSummary.changes.map((c) => (
+                <li key={c.workItemId} className="text-xs">
+                  <span className="font-medium">{c.title}</span>{" "}
+                  {c.kind === "added" && <>— now scheduled ({c.after})</>}
+                  {c.kind === "removed" && <>— no longer scheduled this week</>}
+                  {c.kind === "moved" && <>— moved to {c.after}</>}
+                  {c.kind === "duration-changed" && <>— now {c.after} (was {c.before})</>}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -232,7 +268,7 @@ export default function TodayPage() {
 
       <section className="rounded-lg border border-border bg-surface p-5">
         {entries.length === 0 ? (
-          <EmptyState title="Nothing scheduled today" description="Add assignments, tests, or commitments to generate a plan." />
+          <EmptyState title="Nothing scheduled yet" description="Add some assignments or tests and StudyFlow will build your first day." />
         ) : (
           <div className="flex flex-col gap-2">
             {entries.map((entry) => {
@@ -251,6 +287,8 @@ export default function TodayPage() {
               const isWork = block.origin === "generated" || block.origin === "manual-override";
               const isActive = activeSession?.blockId === block.id;
               const isChoosing = chooserBlockId === block.id;
+              const explanation = block.workItemId ? result.decisionExplanations[block.workItemId] : undefined;
+              const isWhyExpanded = expandedWhyId === block.id;
 
               return (
                 <div key={block.id} className="flex flex-col gap-2">
@@ -278,6 +316,24 @@ export default function TodayPage() {
                       ) : undefined
                     }
                   />
+                  {explanation && block.status === "planned" && (
+                    <div className="ml-2">
+                      <button
+                        onClick={() => setExpandedWhyId(isWhyExpanded ? null : block.id)}
+                        aria-expanded={isWhyExpanded}
+                        className="text-xs text-ink-muted underline-offset-2 hover:text-ink hover:underline"
+                      >
+                        {isWhyExpanded ? "Hide reason" : "Why today?"}
+                      </button>
+                      {isWhyExpanded && (
+                        <ul className="mt-1 flex flex-col gap-0.5 rounded-md border border-dashed border-border-strong bg-paper px-3 py-2">
+                          {explanation.bullets.map((bullet, i) => (
+                            <li key={i} className="text-xs text-ink-muted">• {bullet}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                   {isChoosing && (
                     <div className="ml-2 flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border-strong bg-paper px-3 py-2">
                       <span className="text-xs text-ink-muted">What should happen to &ldquo;{block.title}&rdquo;?</span>

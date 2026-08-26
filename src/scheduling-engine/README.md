@@ -30,10 +30,22 @@ engine:
 | `availability.ts` | `findAvailableWindows`, `subtractIntervals` — free time windows from Planning Profile minus commitments minus existing blocks |
 | `splitting.ts` | `splitTask` — carves remaining minutes into session-length chunks across day slots |
 | `workload-status.ts` | `calculateWorkloadStatus` — ahead/on-track/getting-tight/at-risk, from the same demand/availability numbers `detectOverload` uses |
+| `explanation.ts` | `explainScheduleDecision` — turns priority/urgency/session-count data the engine already has into a structured "why was this scheduled" breakdown (Phase 3B) |
+| `schedule-diff.ts` | `diffSchedules` — compares two `ScheduleBlock[]` snapshots and reports only the work items whose footprint actually changed (Phase 3B) |
 | `scheduler.ts` | `generateSchedule`, `scheduleTask`, `detectOverload`, `replanRemainingSchedule` — orchestrates everything above |
 | `index.ts` | The only module the UI should import from |
 
-## Current status (Phase 2 + 2.5 + 3A)
+## Current status (Phase 2 + 2.5 + 3A + 3B)
+
+**Phase 3B additions:** `explainScheduleDecision` builds a `ScheduleDecisionExplanation` (one-line
+`primaryReason` reusing `explainPriority`, plus structured `bullets`: importance, deadline
+strictness, remaining time, sessions planned, and a behind-schedule/fits-your-hours note) for every
+item that actually got a block placed in a `generateSchedule` call — exposed as
+`GenerateScheduleResult.decisionExplanations`, keyed by work item id. `diffSchedules` aggregates a
+work item's session parts by total minutes and earliest date and compares two snapshots, reporting
+only real changes (added/removed/moved/duration-changed) — deliberately approximate, not a full
+diff of every chunk; used by the UI to show "schedule updated" summaries after replanning or a
+schedule-relevant edit, without duplicating comparison logic in a component.
 
 **Phase 3A additions:** `replanRemainingSchedule` (an explicitly-named wrapper making the "recompute
 everything not fixed" behavior `generateSchedule` already had a first-class, documented concept —

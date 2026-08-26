@@ -9,8 +9,6 @@
  * ever call the actions exposed by `useAppData()`.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { createSeedData, DEMO_USER_ID } from "./seed";
-import { todayDateOnly } from "@/lib/now";
 import type {
   ActiveWorkSession,
   Commitment,
@@ -27,6 +25,9 @@ import {
 
 const STORAGE_KEY = "studyflow.appData.v1";
 
+/** No real accounts yet (Settings' Profile section is still a placeholder) — one local user id. */
+const DEMO_USER_ID = "demo-user";
+
 interface AppState {
   workItems: SchedulableWorkItem[];
   commitments: Commitment[];
@@ -37,40 +38,57 @@ interface AppState {
   feedback: ScheduleFeedback[];
   /** At most one work session in progress at a time (Phase 3A, Part 4). */
   activeSession: ActiveWorkSession | null;
+  /**
+   * False only for a genuine first-ever visit (no saved data at all) — gates the onboarding
+   * redirect in `(app)/layout.tsx`. Existing users are never sent back through onboarding: see
+   * the hydration effect below, which defaults this to `true` for any successfully loaded save,
+   * even one from before this field existed.
+   */
+  onboardingComplete: boolean;
 }
+
+const DEFAULT_PLANNING_PROFILE: PlanningProfile = {
+  userId: DEMO_USER_ID,
+  dailyAvailability: [],
+  preferredSessionMinutes: 45,
+  bufferDays: 1,
+  autoBreaks: true,
+  workloadTolerance: "moderate",
+  breakPreference: "balanced",
+  freeTimePriority: "medium",
+  workStyle: "early",
+};
 
 /**
  * A static, date-free starting point — used for both server rendering and the client's very
  * first (pre-mount) render. It has to be identical on both sides or React throws a hydration
- * mismatch. The seed data (and any saved localStorage data) is date-dependent, so it can only be
- * loaded after mount — see the effect below.
+ * mismatch. Any saved (or freshly-initialized) real data is date-dependent, so it can only be
+ * loaded after mount — see the effect below. `onboardingComplete: true` here is a safe default
+ * for this placeholder render — the real value (and any onboarding redirect) only takes effect
+ * once `hydrated` is true.
  */
 const EMPTY_STATE: AppState = {
   workItems: [],
   commitments: [],
-  planningProfile: {
-    userId: DEMO_USER_ID,
-    dailyAvailability: [],
-    preferredSessionMinutes: 45,
-    bufferDays: 1,
-    autoBreaks: true,
-    workloadTolerance: "moderate",
-    breakPreference: "balanced",
-    freeTimePriority: "medium",
-    workStyle: "early",
-  },
+  planningProfile: DEFAULT_PLANNING_PROFILE,
   fixedBlocks: [],
   workSessions: [],
   feedback: [],
   activeSession: null,
+  onboardingComplete: true,
 };
 
 export type NewWorkItemInput = Omit<SchedulableWorkItem, "id" | "userId" | "status" | "createdAt" | "updatedAt">;
 
 interface AppDataContextValue extends AppState {
-  /** False until client-side data (saved or freshly seeded) has replaced the placeholder empty state. */
+  /** False until client-side data (saved or freshly initialized) has replaced the placeholder empty state. */
   hydrated: boolean;
+  /** True if the last localStorage write failed (e.g. private browsing, storage full) — data still
+   *  works for this session, it just won't survive a reload. Surfaced as a small honest banner. */
+  storageWarning: boolean;
   addWorkItem: (input: NewWorkItemInput) => void;
+  updateWorkItem: (id: string, patch: Partial<NewWorkItemInput>) => void;
+  removeWorkItem: (id: string) => void;
   markWorkItemComplete: (id: string) => void;
   markWorkItemIncomplete: (id: string) => void;
   completeBlock: (
@@ -86,8 +104,11 @@ interface AppDataContextValue extends AppState {
   replanRemainingToday: (block: ScheduleBlock) => void;
   regenerateFrom: (dateOnly: string) => void;
   addCommitment: (input: Omit<Commitment, "id" | "userId">) => void;
+  updateCommitment: (id: string, patch: Partial<Omit<Commitment, "id" | "userId">>) => void;
   removeCommitment: (id: string) => void;
   updatePlanningProfile: (patch: Partial<PlanningProfile>) => void;
+  /** Marks first-time onboarding done (Phase 3B, Part 1/2) — never re-shown after this. */
+  completeOnboarding: () => void;
   submitFeedback: (feedback: Omit<ScheduleFeedback, "id" | "userId" | "createdAt">) => void;
   /** Starts a timed session on a scheduled block (Phase 3A, Part 4). */
   startSession: (block: ScheduleBlock) => void;
@@ -114,22 +135,43 @@ function newId(prefix: string): string {
 export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AppState>(EMPTY_STATE);
   const [hydrated, setHydrated] = useState(false);
+  const [storageWarning, setStorageWarning] = useState(false);
 
-  // Load saved state (or seed fresh data, for a first-ever visit) after mount. This has to run
-  // client-side — localStorage doesn't exist during server rendering, and seeding uses today's
-  // real date, which would disagree with whatever date a statically-built server render happened
-  // to freeze in and trigger a hydration mismatch if it ran any earlier than the initial render.
+  // Load saved state after mount. This has to run client-side — localStorage doesn't exist during
+  // server rendering. A genuine first-ever visit (no saved data, and not just a parse failure)
+  // starts completely empty and routes to onboarding — no fake sample data is created here
+  // (Phase 3B, Part 11/23); a parse failure on corrupt data also falls back to empty rather than
+  // silently discarding what might still be partially recoverable data by guessing.
   useEffect(() => {
     let next: AppState | null = null;
+    let hadSavedData = false;
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) next = JSON.parse(raw) as AppState;
+      if (raw) {
+        hadSavedData = true;
+        next = JSON.parse(raw) as AppState;
+      }
     } catch {
-      // Corrupt or inaccessible storage — fall through to seeding fresh data below.
+      // Corrupt or inaccessible storage — fall through to a fresh empty state below.
     }
-    if (!next) {
-      const seed = createSeedData(todayDateOnly());
-      next = { ...seed, fixedBlocks: [], workSessions: [], feedback: [], activeSession: null };
+    if (next) {
+      // Existing save (even one from before `onboardingComplete` existed) — never force onboarding.
+      next.onboardingComplete = next.onboardingComplete ?? true;
+      next.activeSession = next.activeSession ?? null;
+    } else {
+      next = {
+        workItems: [],
+        commitments: [],
+        planningProfile: DEFAULT_PLANNING_PROFILE,
+        fixedBlocks: [],
+        workSessions: [],
+        feedback: [],
+        activeSession: null,
+        // A raw value that failed to parse (corrupt, not just absent) is treated as an existing
+        // user with damaged data, not a first-timer — don't send someone who already had a plan
+        // back through onboarding just because a save got corrupted.
+        onboardingComplete: hadSavedData,
+      };
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time load from an external store, not a derived-state loop
     setState(next);
@@ -138,10 +180,17 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!hydrated) return;
+    // Syncing React state to an external system (localStorage) on every change, not a derived-
+    // state loop — success/failure here can only be known after attempting the write itself.
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setStorageWarning(false);
     } catch {
-      // Storage full or unavailable (e.g. private browsing) — state still works for this session.
+      // Storage full or unavailable (e.g. private browsing) — state still works for this session,
+      // it just won't survive a reload. Surfaced via `storageWarning` (Phase 3B, Part 18) rather
+      // than failing silently.
+      setStorageWarning(true);
     }
   }, [state, hydrated]);
 
@@ -153,6 +202,27 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         ...s.workItems,
         { ...input, id: newId("item"), userId: DEMO_USER_ID, status: "not-started", createdAt: now, updatedAt: now } as SchedulableWorkItem,
       ],
+    }));
+  }, []);
+
+  const updateWorkItem = useCallback((id: string, patch: Partial<NewWorkItemInput>) => {
+    setState((s) => ({
+      ...s,
+      workItems: s.workItems.map((item) =>
+        item.id === id ? ({ ...item, ...patch, updatedAt: new Date().toISOString() } as SchedulableWorkItem) : item
+      ),
+    }));
+  }, []);
+
+  const removeWorkItem = useCallback((id: string) => {
+    setState((s) => ({
+      ...s,
+      workItems: s.workItems.filter((item) => item.id !== id),
+      // Drop any historical (completed/skipped/manually-moved) blocks for the deleted item too —
+      // an orphaned block referencing a work item that no longer exists would just be confusing.
+      // Past WorkSessions are left alone; they're a record of time actually spent, not a live view.
+      fixedBlocks: s.fixedBlocks.filter((b) => b.workItemId !== id),
+      activeSession: s.activeSession?.workItemId === id ? null : s.activeSession,
     }));
   }, []);
 
@@ -298,6 +368,13 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const updateCommitment = useCallback((id: string, patch: Partial<Omit<Commitment, "id" | "userId">>) => {
+    setState((s) => ({
+      ...s,
+      commitments: s.commitments.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+    }));
+  }, []);
+
   const removeCommitment = useCallback((id: string) => {
     setState((s) => ({ ...s, commitments: s.commitments.filter((c) => c.id !== id) }));
   }, []);
@@ -367,6 +444,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     setState((s) => ({ ...s, planningProfile: { ...s.planningProfile, ...patch } }));
   }, []);
 
+  const completeOnboarding = useCallback(() => {
+    setState((s) => ({ ...s, onboardingComplete: true }));
+  }, []);
+
   const submitFeedback = useCallback((feedback: Omit<ScheduleFeedback, "id" | "userId" | "createdAt">) => {
     setState((s) => {
       const nextFeedback = [
@@ -394,7 +475,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     () => ({
       ...state,
       hydrated,
+      storageWarning,
       addWorkItem,
+      updateWorkItem,
+      removeWorkItem,
       markWorkItemComplete,
       markWorkItemIncomplete,
       completeBlock,
@@ -403,8 +487,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       replanRemainingToday,
       regenerateFrom,
       addCommitment,
+      updateCommitment,
       removeCommitment,
       updatePlanningProfile,
+      completeOnboarding,
       submitFeedback,
       startSession,
       startAdHocSession,
@@ -414,7 +500,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     [
       state,
       hydrated,
+      storageWarning,
       addWorkItem,
+      updateWorkItem,
+      removeWorkItem,
       markWorkItemComplete,
       markWorkItemIncomplete,
       completeBlock,
@@ -423,8 +512,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       replanRemainingToday,
       regenerateFrom,
       addCommitment,
+      updateCommitment,
       removeCommitment,
       updatePlanningProfile,
+      completeOnboarding,
       submitFeedback,
       startSession,
       startAdHocSession,

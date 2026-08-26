@@ -90,6 +90,8 @@ export interface GenerateScheduleResult {
   workloadStatus: WorkloadStatus;
   /** Per-day projected workload vs. available time across the requested range (Part 8). */
   dailyForecast: DailyForecastEntry[];
+  /** A "why was this scheduled" breakdown per work item that has at least one block placed (Phase 3B, Part 4/5). */
+  decisionExplanations: Record<string, ScheduleDecisionExplanation>;
 }
 
 /** Input for recomputing a plan after something changes (missed session, new item, moved due date). */
@@ -123,4 +125,31 @@ export interface DailyForecastEntry {
   date: string; // "YYYY-MM-DD"
   workMinutes: number;
   availableMinutes: number;
+}
+
+/**
+ * A structured "why was this scheduled" breakdown for one work item (Phase 3B, Part 4/5).
+ * `primaryReason` is a single sentence (reuses `explainPriority`); `bullets` are short,
+ * independently-true statements built only from data the engine already computed elsewhere in
+ * this same result — nothing here is invented or estimated separately from the real placement.
+ */
+export interface ScheduleDecisionExplanation {
+  workItemId: string;
+  primaryReason: string;
+  bullets: string[];
+}
+
+/** One work item's schedule footprint changing between two `generateSchedule` results (Phase 3B, Part 6/7). */
+export interface WorkItemScheduleChange {
+  workItemId: string;
+  title: string;
+  kind: "added" | "removed" | "moved" | "duration-changed";
+  /** Human-readable "before"/"after", omitted where not applicable (e.g. `before` for "added"). */
+  before?: string;
+  after?: string;
+}
+
+/** The result of comparing two schedules — only the work items that actually changed (Part 7). */
+export interface ScheduleChangeSummary {
+  changes: WorkItemScheduleChange[];
 }

@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import { Button } from "@/components/ui/Button";
 import { TaskRow } from "@/components/tasks/TaskRow";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WorkloadStatusBadge } from "@/components/schedule/WorkloadStatusBadge";
@@ -35,6 +37,25 @@ export default function DashboardPage() {
     .slice(0, 5);
 
   const completedSessions = workSessions.filter((s) => s.minutesSpent != null && s.plannedMinutes != null);
+  const todaysWorkBlocks = result.blocks.filter((b) => b.start.slice(0, 10) === today && b.workItemId && b.status === "planned");
+
+  if (workItems.length === 0) {
+    return (
+      <div>
+        <PageHeader title="Dashboard" description="A quick look at your workload and how the week is going." />
+        <EmptyState
+          title="Add your first assignment or test"
+          description="Once you've added something with a due date, your dashboard will show today's workload, upcoming deadlines, and how the week is going."
+          action={
+            <div className="flex gap-2">
+              <Link href="/assignments"><Button>Add an assignment</Button></Link>
+              <Link href="/tests"><Button variant="secondary">Add a test or quiz</Button></Link>
+            </div>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -44,7 +65,19 @@ export default function DashboardPage() {
         <WorkloadStatusBadge status={result.workloadStatus} />
       </div>
 
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid gap-6 sm:grid-cols-3">
+        <section className="rounded-lg border border-border bg-surface p-5">
+          <h2 className="mb-3 text-sm font-semibold text-ink">Today</h2>
+          {todaysWorkBlocks.length === 0 ? (
+            <p className="text-sm text-ink-muted">Nothing scheduled today.</p>
+          ) : (
+            <p className="text-sm text-ink">
+              {todaysWorkBlocks.length} session{todaysWorkBlocks.length === 1 ? "" : "s"} planned —{" "}
+              <Link href="/today" className="font-medium text-brand hover:underline">view Today</Link>
+            </p>
+          )}
+        </section>
+
         <section className="rounded-lg border border-border bg-surface p-5">
           <h2 className="mb-3 text-sm font-semibold text-ink">This week&apos;s workload</h2>
           {dueThisWeek.length === 0 ? (
@@ -64,7 +97,7 @@ export default function DashboardPage() {
           ) : (
             <p className="text-sm text-ink">
               Based on {completedSessions.length} completed session{completedSessions.length === 1 ? "" : "s"} — see the{" "}
-              <span className="font-medium">Insights</span> page for the full breakdown.
+              <Link href="/insights" className="font-medium text-brand hover:underline">Insights</Link> page for the full breakdown.
             </p>
           )}
         </section>

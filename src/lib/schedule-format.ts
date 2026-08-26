@@ -1,5 +1,7 @@
 import type { ScheduleBlock } from "@/types/models";
 import type { ScheduleBlockCardProps } from "@/components/schedule/ScheduleBlockCard";
+import type { NewWorkItemInput } from "@/lib/data/store";
+import type { SchedulableWorkItem } from "@/scheduling-engine";
 
 export function blockCardKind(block: ScheduleBlock): ScheduleBlockCardProps["kind"] {
   if (block.origin === "break") return "break";
@@ -34,4 +36,16 @@ export function formatDueLabel(dueDateIso: string, todayDateOnly: string): strin
 function dateOnlyToUtcMs(dateOnly: string): number {
   const [y, m, d] = dateOnly.split("-").map(Number);
   return Date.UTC(y, m - 1, d);
+}
+
+/** Fields the scheduler actually reacts to — used to decide whether an edit deserves the
+ *  "your schedule was updated" notice (Phase 3B, Part 8/9), not every cosmetic change. */
+export function changesSchedule(before: SchedulableWorkItem, after: NewWorkItemInput): boolean {
+  return (
+    before.dueDate !== after.dueDate ||
+    before.estimatedMinutes !== after.estimatedMinutes ||
+    before.weight !== after.weight ||
+    before.deadlineStrictness !== after.deadlineStrictness ||
+    (before.preferredStartDate ?? "") !== (after.preferredStartDate ?? "")
+  );
 }

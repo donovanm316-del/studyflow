@@ -22,6 +22,7 @@ import {
 import { calculateDailyCapacity, calculateFeedbackAdjustment } from "./capacity";
 import { findAvailableWindows, subtractIntervals, type TimeWindow } from "./availability";
 import { calculatePriority, explainPriority } from "./priority";
+import { explainScheduleDecision } from "./explanation";
 import { isSplittableWorkType, sessionBounds, splitTask, type DaySlot, type PlannedChunk } from "./splitting";
 import { blockDurationMinutes, combineDateAndMinutes, dateRange, diffInDays, toDateOnly } from "./date-utils";
 import { calculateWorkloadStatus } from "./workload-status";
@@ -31,6 +32,7 @@ import type {
   GenerateScheduleResult,
   PriorityBreakdown,
   ReplanInput,
+  ScheduleDecisionExplanation,
   ScheduleWarning,
   SchedulableWorkItem,
   WorkAheadSuggestion,
@@ -243,6 +245,22 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     a.start < b.start ? -1 : a.start > b.start ? 1 : 0
   );
 
+  const newSessionCountByItem = new Map<string, number>();
+  for (const block of newBlocks) {
+    if (!block.workItemId) continue;
+    newSessionCountByItem.set(block.workItemId, (newSessionCountByItem.get(block.workItemId) ?? 0) + 1);
+  }
+  const decisionExplanations: Record<string, ScheduleDecisionExplanation> = {};
+  for (const { item, remainingMinutes } of schedulable) {
+    const sessionCount = newSessionCountByItem.get(item.id);
+    if (!sessionCount) continue; // nothing actually placed for this item in this call
+    decisionExplanations[item.id] = explainScheduleDecision(item, priorities[item.id], {
+      remainingMinutes,
+      sessionCount,
+      isBehind,
+    });
+  }
+
   return {
     blocks,
     unscheduledWorkItemIds,
@@ -253,6 +271,7 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     feedbackAdjustment,
     workloadStatus,
     dailyForecast,
+    decisionExplanations,
   };
 }
 

@@ -5,11 +5,13 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { TaskRow } from "@/components/tasks/TaskRow";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { AddWorkItemModal } from "@/components/tasks/AddWorkItemModal";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { WorkItemModal } from "@/components/tasks/WorkItemModal";
 import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
-import { formatDueLabel } from "@/lib/schedule-format";
+import { changesSchedule, formatDueLabel } from "@/lib/schedule-format";
 import { todayDateOnly } from "@/lib/now";
+import type { SchedulableWorkItem } from "@/scheduling-engine";
 
 const KIND_LABEL: Record<string, string> = { test: "Test", quiz: "Quiz" };
 
@@ -20,8 +22,12 @@ function addDaysToDateOnly(dateOnly: string, days: number): string {
 }
 
 export default function TestsPage() {
-  const { workItems, addWorkItem, markWorkItemComplete, markWorkItemIncomplete } = useAppData();
-  const [modalOpen, setModalOpen] = useState(false);
+  const { workItems, planningProfile, addWorkItem, updateWorkItem, removeWorkItem, markWorkItemComplete, markWorkItemIncomplete } =
+    useAppData();
+  const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<SchedulableWorkItem | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const today = todayDateOnly();
 
   const items = workItems
@@ -37,12 +43,23 @@ export default function TestsPage() {
       <PageHeader
         title="Tests & Quizzes"
         description="Exams and quizzes, tracked separately so prep time gets weighted correctly."
-        action={<Button onClick={() => setModalOpen(true)}>Add test or quiz</Button>}
+        action={<Button onClick={() => setAddOpen(true)}>Add test or quiz</Button>}
       />
+
+      {updateNotice && (
+        <div className="mb-4 flex items-center justify-between gap-2 rounded-md border border-brand-soft bg-brand-soft px-4 py-3 text-sm text-brand-strong">
+          <span>{updateNotice}</span>
+          <button onClick={() => setUpdateNotice(null)} aria-label="Dismiss" className="text-brand-strong hover:opacity-70">✕</button>
+        </div>
+      )}
 
       <section className="rounded-lg border border-border bg-surface p-5">
         {items.length === 0 ? (
-          <EmptyState title="No tests or quizzes yet" description="Add one to see it here and in your schedule." />
+          <EmptyState
+            title="No tests or quizzes yet"
+            description="Add one and StudyFlow will schedule prep time before the date, not on it."
+            action={<Button onClick={() => setAddOpen(true)}>Add test or quiz</Button>}
+          />
         ) : (
           items.map((item) => {
             const remainingMinutes = Math.max(0, item.estimatedMinutes - (item.actualMinutes ?? 0));
@@ -64,17 +81,54 @@ export default function TestsPage() {
                 onToggleComplete={() =>
                   item.status === "completed" ? markWorkItemIncomplete(item.id) : markWorkItemComplete(item.id)
                 }
+                onEdit={() => setEditing(item)}
               />
             );
           })
         )}
       </section>
 
-      <AddWorkItemModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSubmit={addWorkItem}
-        kindOptions={[{ value: "test", label: "Test" }, { value: "quiz", label: "Quiz" }]}
+      {addOpen && (
+        <WorkItemModal
+          open
+          onClose={() => setAddOpen(false)}
+          onSubmit={addWorkItem}
+          kindOptions={[{ value: "test", label: "Test" }, { value: "quiz", label: "Quiz" }]}
+          defaultRigor={planningProfile.defaultRigor}
+        />
+      )}
+
+      {editing && (
+        <WorkItemModal
+          key={editing.id}
+          open
+          onClose={() => setEditing(null)}
+          onSubmit={(input) => {
+            updateWorkItem(editing.id, input);
+            if (changesSchedule(editing, input)) {
+              setUpdateNotice(`Your schedule was updated to reflect the change to "${input.title}".`);
+            }
+          }}
+          kindOptions={[{ value: "test", label: "Test" }, { value: "quiz", label: "Quiz" }]}
+          initial={editing}
+          onDelete={() => {
+            setConfirmDeleteId(editing.id);
+            setEditing(null);
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmDeleteId != null}
+        title="Delete this item?"
+        description="This removes it from your tests & quizzes and clears any scheduled prep sessions for it. This can't be undone."
+        confirmLabel="Delete"
+        danger
+        onCancel={() => setConfirmDeleteId(null)}
+        onConfirm={() => {
+          if (confirmDeleteId) removeWorkItem(confirmDeleteId);
+          setConfirmDeleteId(null);
+        }}
       />
     </div>
   );

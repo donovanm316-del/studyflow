@@ -16,6 +16,8 @@ export {
 export { findAvailableWindows, subtractIntervals } from "./availability";
 export { splitTask, sessionBounds, isSplittableWorkType } from "./splitting";
 export { calculateWorkloadStatus } from "./workload-status";
+export { explainScheduleDecision } from "./explanation";
+export { diffSchedules } from "./schedule-diff";
 export { minutesOfDay, formatMinutesAsHoursMinutes, blockDurationMinutes, toDateOnly } from "./date-utils";
 
 export type {
@@ -26,8 +28,11 @@ export type {
   PriorityBreakdown,
   ReplanInput,
   SchedulableWorkItem,
+  ScheduleChangeSummary,
+  ScheduleDecisionExplanation,
   ScheduleWarning,
   WorkAheadSuggestion,
+  WorkItemScheduleChange,
   WorkloadStatus,
 } from "./types";
 export type { TimeWindow } from "./availability";

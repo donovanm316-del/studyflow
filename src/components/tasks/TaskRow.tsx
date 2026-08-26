@@ -1,4 +1,5 @@
 import { Badge, BadgeTone } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import type { WorkItemStatus } from "@/types/models";
 
@@ -12,6 +13,8 @@ export interface TaskRowProps {
   className?: string;
   /** When provided, renders a checkbox that toggles complete/incomplete. */
   onToggleComplete?: () => void;
+  /** When provided, renders an "Edit" button that opens the item for editing (Phase 3B, Part 8/9). */
+  onEdit?: () => void;
   /**
    * Deadline-awareness context (Phase 3A, Part 13) — only rendered when there's something
    * meaningful to say, and only sourced from real data the caller already computed.
@@ -44,6 +47,7 @@ export function TaskRow({
   estimatedMinutes,
   className,
   onToggleComplete,
+  onEdit,
   remainingMinutes,
   plannedSessionCount,
   urgent,
@@ -88,9 +92,14 @@ export function TaskRow({
         </div>
         {contextParts.length > 0 && <p className="text-xs text-ink-faint">{contextParts.join(" · ")}</p>}
       </div>
-      <Badge tone={statusTone[status]} className="shrink-0">
-        {statusLabel[status]}
-      </Badge>
+      <div className="flex shrink-0 items-center gap-2">
+        <Badge tone={statusTone[status]}>{statusLabel[status]}</Badge>
+        {onEdit && (
+          <Button size="sm" variant="ghost" onClick={onEdit} aria-label={`Edit ${title}`}>
+            Edit
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

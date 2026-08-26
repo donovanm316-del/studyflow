@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { AddCommitmentModal } from "@/components/tasks/AddCommitmentModal";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { CommitmentModal } from "@/components/tasks/CommitmentModal";
 import { useAppData } from "@/lib/data/store";
 import type { BreakPreference, Commitment, FreeTimePriority, WorkStyle, WorkloadTolerance } from "@/types/models";
 
@@ -34,12 +35,22 @@ function scheduleSummary(commitment: Commitment): string {
 }
 
 export default function SettingsPage() {
-  const { planningProfile, updatePlanningProfile, commitments, addCommitment, removeCommitment } = useAppData();
-  const [commitmentModalOpen, setCommitmentModalOpen] = useState(false);
+  const { planningProfile, updatePlanningProfile, commitments, addCommitment, updateCommitment, removeCommitment } = useAppData();
+  const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<Commitment | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null);
 
   return (
     <div>
       <PageHeader title="Settings" description="Account and planning preferences." />
+
+      {updateNotice && (
+        <div className="mb-4 flex items-center justify-between gap-2 rounded-md border border-brand-soft bg-brand-soft px-4 py-3 text-sm text-brand-strong">
+          <span>{updateNotice}</span>
+          <button onClick={() => setUpdateNotice(null)} aria-label="Dismiss" className="text-brand-strong hover:opacity-70">✕</button>
+        </div>
+      )}
 
       <div className="flex flex-col gap-6">
         <section className="rounded-lg border border-border bg-surface p-5">
@@ -133,13 +144,17 @@ export default function SettingsPage() {
         <section className="rounded-lg border border-border bg-surface p-5">
           <div className="mb-1 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-ink">Commitments</h2>
-            <Button size="sm" onClick={() => setCommitmentModalOpen(true)}>Add commitment</Button>
+            <Button size="sm" onClick={() => setAddOpen(true)}>Add commitment</Button>
           </div>
           <p className="mb-4 text-xs text-ink-faint">
             Fixed time the scheduler will never place work over — practice, clubs, work shifts, family time, appointments.
           </p>
           {commitments.length === 0 ? (
-            <EmptyState title="No commitments yet" description="Add one so the scheduler knows when you're already busy." />
+            <EmptyState
+              title="No commitments yet"
+              description="Add one so the scheduler knows when you're already busy."
+              action={<Button size="sm" onClick={() => setAddOpen(true)}>Add commitment</Button>}
+            />
           ) : (
             <ul className="flex flex-col divide-y divide-border">
               {commitments.map((c) => (
@@ -151,8 +166,8 @@ export default function SettingsPage() {
                     </div>
                     <span className="text-xs text-ink-muted">{scheduleSummary(c)}</span>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => removeCommitment(c.id)}>
-                    Remove
+                  <Button size="sm" variant="ghost" onClick={() => setEditing(c)} aria-label={`Edit ${c.title}`}>
+                    Edit
                   </Button>
                 </li>
               ))}
@@ -171,7 +186,37 @@ export default function SettingsPage() {
         </section>
       </div>
 
-      <AddCommitmentModal open={commitmentModalOpen} onClose={() => setCommitmentModalOpen(false)} onSubmit={addCommitment} />
+      {addOpen && <CommitmentModal open onClose={() => setAddOpen(false)} onSubmit={addCommitment} />}
+
+      {editing && (
+        <CommitmentModal
+          key={editing.id}
+          open
+          onClose={() => setEditing(null)}
+          onSubmit={(input) => {
+            updateCommitment(editing.id, input);
+            setUpdateNotice(`Your schedule was updated to reflect the change to "${input.title}".`);
+          }}
+          initial={editing}
+          onDelete={() => {
+            setConfirmDeleteId(editing.id);
+            setEditing(null);
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmDeleteId != null}
+        title="Delete this commitment?"
+        description="StudyFlow will stop protecting this time, and future schedules may place work there. This can't be undone."
+        confirmLabel="Delete"
+        danger
+        onCancel={() => setConfirmDeleteId(null)}
+        onConfirm={() => {
+          if (confirmDeleteId) removeCommitment(confirmDeleteId);
+          setConfirmDeleteId(null);
+        }}
+      />
     </div>
   );
 }

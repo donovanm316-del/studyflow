@@ -241,6 +241,12 @@ export interface PlanningProfile {
   freeTimePriority: FreeTimePriority;
   /** Whether the student prefers to finish early, spread work evenly, or work closer to deadlines. */
   workStyle: WorkStyle;
+  /**
+   * A sensible starting rigor for new work items (Phase 3B onboarding, Part 1 Step 2) — purely a
+   * UI default for the add/edit item form. The scheduling engine only ever reads each work item's
+   * own `rigor` field (see `capacity.ts`); this never feeds the engine directly.
+   */
+  defaultRigor?: CourseRigor;
 }
 
 export type WorkloadTolerance = "light" | "moderate" | "heavy" | "adaptive";

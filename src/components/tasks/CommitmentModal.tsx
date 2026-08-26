@@ -21,30 +21,31 @@ const CATEGORY_OPTIONS: { value: Commitment["category"]; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
-export interface AddCommitmentModalProps {
+export interface CommitmentModalProps {
   open: boolean;
   onClose: () => void;
   onSubmit: (input: Omit<Commitment, "id" | "userId">) => void;
+  /** Present → the modal opens pre-filled in edit mode instead of add mode. */
+  initial?: Commitment;
+  /** Shown only in edit mode. The caller owns confirming the delete before actually removing it. */
+  onDelete?: () => void;
 }
 
-export function AddCommitmentModal({ open, onClose, onSubmit }: AddCommitmentModalProps) {
-  const [title, setTitle] = useState("");
-  const [category, setCategory] = useState<Commitment["category"]>("school");
-  const [isRecurring, setIsRecurring] = useState(true);
-  const [daysOfWeek, setDaysOfWeek] = useState<number[]>([1, 2, 3, 4, 5]);
-  const [date, setDate] = useState("");
-  const [startTime, setStartTime] = useState("16:00");
-  const [endTime, setEndTime] = useState("17:00");
-
-  function reset() {
-    setTitle("");
-    setCategory("school");
-    setIsRecurring(true);
-    setDaysOfWeek([1, 2, 3, 4, 5]);
-    setDate("");
-    setStartTime("16:00");
-    setEndTime("17:00");
-  }
+export function CommitmentModal({ open, onClose, onSubmit, initial, onDelete }: CommitmentModalProps) {
+  const isEditing = !!initial;
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [category, setCategory] = useState<Commitment["category"]>(initial?.category ?? "school");
+  const [isRecurring, setIsRecurring] = useState(initial ? initial.recurrence.type === "weekly" : true);
+  const [daysOfWeek, setDaysOfWeek] = useState<number[]>(
+    initial?.recurrence.type === "weekly" ? initial.recurrence.daysOfWeek : [1, 2, 3, 4, 5]
+  );
+  const [date, setDate] = useState(initial?.recurrence.type === "one-off" ? initial.recurrence.date : "");
+  const [startTime, setStartTime] = useState(initial?.startTime ?? "16:00");
+  const [endTime, setEndTime] = useState(initial?.endTime ?? "17:00");
+  const [titleError, setTitleError] = useState<string | undefined>();
+  const [timeError, setTimeError] = useState<string | undefined>();
+  const [dateError, setDateError] = useState<string | undefined>();
+  const [daysError, setDaysError] = useState<string | undefined>();
 
   function toggleDay(day: number) {
     setDaysOfWeek((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()));
@@ -52,26 +53,40 @@ export function AddCommitmentModal({ open, onClose, onSubmit }: AddCommitmentMod
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!title.trim() || startTime >= endTime) return;
-    if (isRecurring && daysOfWeek.length === 0) return;
-    if (!isRecurring && !date) return;
+    const trimmedTitle = title.trim();
+    const nextTitleError = trimmedTitle ? undefined : "Give this commitment a name.";
+    const nextTimeError = startTime < endTime ? undefined : "End time must be after the start time.";
+    const nextDateError = !isRecurring && !date ? "Pick a date for a one-time commitment." : undefined;
+    const nextDaysError = isRecurring && daysOfWeek.length === 0 ? "Pick at least one day." : undefined;
+
+    setTitleError(nextTitleError);
+    setTimeError(nextTimeError);
+    setDateError(nextDateError);
+    setDaysError(nextDaysError);
+    if (nextTitleError || nextTimeError || nextDateError || nextDaysError) return;
 
     onSubmit({
-      title: title.trim(),
+      title: trimmedTitle,
       category,
       recurrence: isRecurring ? { type: "weekly", daysOfWeek } : { type: "one-off", date },
       startTime,
       endTime,
     });
 
-    reset();
     onClose();
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Add commitment">
+    <Modal open={open} onClose={onClose} title={isEditing ? "Edit commitment" : "Add commitment"}>
       <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-        <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} required placeholder="e.g. Soccer practice" />
+        <Input
+          label="Title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          required
+          placeholder="e.g. Soccer practice"
+          error={titleError}
+        />
 
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium text-ink">Category</label>
@@ -103,6 +118,7 @@ export function AddCommitmentModal({ open, onClose, onSubmit }: AddCommitmentMod
                   type="button"
                   onClick={() => toggleDay(day)}
                   aria-pressed={daysOfWeek.includes(day)}
+                  aria-label={label}
                   className={`h-8 w-8 rounded-full border text-xs font-medium transition-colors ${
                     daysOfWeek.includes(day)
                       ? "border-transparent bg-brand text-white"
@@ -113,19 +129,29 @@ export function AddCommitmentModal({ open, onClose, onSubmit }: AddCommitmentMod
                 </button>
               ))}
             </div>
+            {daysError && <span className="text-xs text-danger">{daysError}</span>}
           </div>
         ) : (
-          <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required error={dateError} />
         )}
 
         <div className="grid grid-cols-2 gap-4">
           <Input label="Start time" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
-          <Input label="End time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
+          <Input label="End time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required error={timeError} />
         </div>
 
-        <div className="mt-2 flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button type="submit">Add</Button>
+        <div className="mt-2 flex items-center justify-between gap-2">
+          {isEditing && onDelete ? (
+            <Button type="button" variant="ghost" className="text-danger hover:bg-danger-soft" onClick={onDelete}>
+              Delete
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit">{isEditing ? "Save changes" : "Add"}</Button>
+          </div>
         </div>
       </form>
     </Modal>

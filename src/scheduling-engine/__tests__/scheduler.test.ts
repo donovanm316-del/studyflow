@@ -929,3 +929,39 @@ describe("Phase 3A — daily workload forecast", () => {
     expect(result.dailyForecast.every((d) => d.workMinutes === 0)).toBe(true);
   });
 });
+
+describe("Phase 3B — scheduling decision explanations", () => {
+  it("includes an explanation for every item that actually got a block placed", () => {
+    const item = makeAssignment({ estimatedMinutes: 45, dueDate: "2026-08-26T23:59:00" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-26",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    expect(result.decisionExplanations[item.id]).toBeDefined();
+    expect(result.decisionExplanations[item.id].primaryReason).toContain(item.title);
+    expect(result.decisionExplanations[item.id].bullets.length).toBeGreaterThan(0);
+  });
+
+  it("does not include an explanation for an item that got nothing placed this call", () => {
+    // Fully covered already (estimatedMinutes === actualMinutes) — nothing left to place, and
+    // status !== "completed" so it's still "not completed" but has zero remaining work.
+    const item = makeAssignment({ estimatedMinutes: 45, actualMinutes: 45, dueDate: "2026-08-26T23:59:00" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-26",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    expect(result.decisionExplanations[item.id]).toBeUndefined();
+  });
+});
