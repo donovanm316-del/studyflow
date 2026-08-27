@@ -35,7 +35,8 @@ function scheduleSummary(commitment: Commitment): string {
 }
 
 export default function SettingsPage() {
-  const { planningProfile, updatePlanningProfile, commitments, addCommitment, updateCommitment, removeCommitment } = useAppData();
+  const { planningProfile, updatePlanningProfile, commitments, addCommitment, updateCommitment, removeCommitment, resetOnboarding } =
+    useAppData();
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<Commitment | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -173,6 +174,18 @@ export default function SettingsPage() {
               ))}
             </ul>
           )}
+        </section>
+
+        <section className="rounded-lg border border-border bg-surface p-5">
+          <h2 className="mb-1 text-sm font-semibold text-ink">Setup</h2>
+          <p className="mb-4 text-xs text-ink-faint">
+            Walk through the setup questions again to rebuild your planning preferences from scratch. Your
+            assignments, tests, commitments, and history are not affected — only the answers below get replaced
+            once you finish.
+          </p>
+          <Button variant="secondary" onClick={resetOnboarding}>
+            Redo setup
+          </Button>
         </section>
 
         <section className="rounded-lg border border-border bg-surface p-5">

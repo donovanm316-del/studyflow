@@ -122,6 +122,10 @@ interface AppDataContextValue extends AppState {
   updatePlanningProfile: (patch: Partial<PlanningProfile>) => void;
   /** Marks first-time onboarding done (Phase 3B, Part 1/2) — never re-shown after this. */
   completeOnboarding: () => void;
+  /** Sends the student back through onboarding on demand (e.g. Settings' "Redo setup"). Does not
+   *  touch existing work items, commitments, or history — only the completion flag, so
+   *  `OnboardingGate` redirects to `/onboarding` on the very next render. */
+  resetOnboarding: () => void;
   submitFeedback: (feedback: Omit<ScheduleFeedback, "id" | "userId" | "createdAt">) => void;
   /** Starts a timed session on a scheduled block (Phase 3A, Part 4). */
   startSession: (block: ScheduleBlock) => void;
@@ -566,6 +570,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     setState((s) => ({ ...s, onboardingComplete: true }));
   }, []);
 
+  const resetOnboarding = useCallback(() => {
+    setState((s) => ({ ...s, onboardingComplete: false }));
+  }, []);
+
   const submitFeedback = useCallback((feedback: Omit<ScheduleFeedback, "id" | "userId" | "createdAt">) => {
     setState((s) => {
       const nextFeedback = [
@@ -614,6 +622,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       removeCommitment,
       updatePlanningProfile,
       completeOnboarding,
+      resetOnboarding,
       submitFeedback,
       startSession,
       startAdHocSession,
@@ -644,6 +653,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       removeCommitment,
       updatePlanningProfile,
       completeOnboarding,
+      resetOnboarding,
       submitFeedback,
       startSession,
       startAdHocSession,
