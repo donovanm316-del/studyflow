@@ -1,4 +1,4 @@
-import type { ScheduleBlock } from "@/types/models";
+import type { ScheduleBlock, WorkStage } from "@/types/models";
 import type { ScheduleBlockCardProps } from "@/components/schedule/ScheduleBlockCard";
 import type { NewWorkItemInput } from "@/lib/data/store";
 import type { SchedulableWorkItem } from "@/scheduling-engine";
@@ -36,6 +36,19 @@ export function formatDueLabel(dueDateIso: string, todayDateOnly: string): strin
 function dateOnlyToUtcMs(dateOnly: string): number {
   const [y, m, d] = dateOnly.split("-").map(Number);
   return Date.UTC(y, m - 1, d);
+}
+
+/**
+ * True if `block` is scheduled time for `workItemId` — directly, or (Phase 4) via one of that
+ * item's decomposed stages, whose id is what actually ends up on the block's `workItemId`. Pages
+ * that count/find a work item's blocks (Dashboard, Assignments, Tests) use this instead of a bare
+ * `===` so a decomposed project's session counts don't silently read as zero.
+ */
+export function blockMatchesWorkItem(block: ScheduleBlock, workItemId: string, stages: WorkStage[]): boolean {
+  if (!block.workItemId) return false;
+  if (block.workItemId === workItemId) return true;
+  const stage = stages.find((s) => s.id === block.workItemId);
+  return stage?.workItemId === workItemId;
 }
 
 /** Fields the scheduler actually reacts to — used to decide whether an edit deserves the

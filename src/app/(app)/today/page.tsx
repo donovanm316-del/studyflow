@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ScheduleBlockCard } from "@/components/schedule/ScheduleBlockCard";
 import { WorkloadStatusBadge } from "@/components/schedule/WorkloadStatusBadge";
+import { NextUpCard } from "@/components/schedule/NextUpCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -11,6 +12,8 @@ import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
 import { blockCardKind, formatTimeRange } from "@/lib/schedule-format";
 import { currentWeekRange, todayDateOnly } from "@/lib/now";
+import { nowLocalIso } from "@/lib/now";
+import { getNextBestAction } from "@/lib/next-best-action";
 import { diffSchedules, minutesOfDay, subtractIntervals, type ScheduleChangeSummary, type TimeWindow } from "@/scheduling-engine";
 import type { ScheduleBlock, WorkSession } from "@/types/models";
 
@@ -153,6 +156,11 @@ export default function TodayPage() {
   const review = result.workAheadSuggestions.filter((s) => s.type === "review");
   const showCaughtUpPanel = result.caughtUp && todaysBlocks.filter((b) => b.origin === "generated").length === 0;
 
+  // "Next best action" (Phase 4, Part 15-18) — reads the same `result` the timeline below already
+  // renders, so it can never disagree with what's actually on the schedule. Recomputed only when
+  // the schedule or active session actually changes, not on every render.
+  const nextAction = useMemo(() => getNextBestAction(result, activeSession, nowLocalIso()), [result, activeSession]);
+
   return (
     <div>
       <PageHeader title="Today" description="Your day, as a timeline — fixed commitments, work sessions, breaks, and free time." />
@@ -226,6 +234,13 @@ export default function TodayPage() {
           </div>
         </div>
       )}
+
+      {!activeSession &&
+        (nextAction.kind === "scheduled" || (nextAction.kind === "no-work" && !showCaughtUpPanel)) && (
+          <div className="mb-4">
+            <NextUpCard action={nextAction} onStart={nextAction.kind === "scheduled" ? () => startSession(nextAction.block) : undefined} />
+          </div>
+        )}
 
       {showCaughtUpPanel && (
         <div className="mb-4 rounded-md border border-success-soft bg-success-soft px-4 py-3 text-sm text-success">

@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ProgressBar } from "@/components/ui/ProgressBar";
@@ -7,10 +8,12 @@ import { Button } from "@/components/ui/Button";
 import { TaskRow } from "@/components/tasks/TaskRow";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WorkloadStatusBadge } from "@/components/schedule/WorkloadStatusBadge";
+import { NextUpCard } from "@/components/schedule/NextUpCard";
 import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
-import { formatDueLabel } from "@/lib/schedule-format";
-import { currentWeekRange, todayDateOnly } from "@/lib/now";
+import { blockMatchesWorkItem, formatDueLabel } from "@/lib/schedule-format";
+import { currentWeekRange, todayDateOnly, nowLocalIso } from "@/lib/now";
+import { getNextBestAction } from "@/lib/next-best-action";
 
 const KIND_LABEL: Record<string, string> = { assignment: "Assignment", test: "Test", quiz: "Quiz", project: "Project" };
 
@@ -21,11 +24,12 @@ function addDaysToDateOnly(dateOnly: string, days: number): string {
 }
 
 export default function DashboardPage() {
-  const { workItems, workSessions } = useAppData();
+  const { workItems, workSessions, stages, activeSession, startSession } = useAppData();
   const { start, end } = currentWeekRange();
   const today = todayDateOnly();
   const todaySoonCutoff = addDaysToDateOnly(today, 1); // "due soon" = due today or tomorrow
   const result = useSchedule(start, end);
+  const nextAction = useMemo(() => getNextBestAction(result, activeSession, nowLocalIso()), [result, activeSession]);
 
   const dueThisWeek = workItems.filter((item) => item.dueDate.slice(0, 10) >= start && item.dueDate.slice(0, 10) <= end);
   const completedThisWeek = dueThisWeek.filter((item) => item.status === "completed").length;
@@ -64,6 +68,12 @@ export default function DashboardPage() {
       <div className="mb-6">
         <WorkloadStatusBadge status={result.workloadStatus} />
       </div>
+
+      {!activeSession && nextAction.kind === "scheduled" && (
+        <div className="mb-6">
+          <NextUpCard action={nextAction} onStart={() => startSession(nextAction.block)} compact />
+        </div>
+      )}
 
       <div className="grid gap-6 sm:grid-cols-3">
         <section className="rounded-lg border border-border bg-surface p-5">
@@ -111,7 +121,7 @@ export default function DashboardPage() {
           upcoming.map((item) => {
             const remainingMinutes = Math.max(0, item.estimatedMinutes - (item.actualMinutes ?? 0));
             const plannedSessionCount = result.blocks.filter(
-              (b) => b.workItemId === item.id && b.status === "planned"
+              (b) => blockMatchesWorkItem(b, item.id, stages) && b.status === "planned"
             ).length;
             const dueSoon = item.dueDate.slice(0, 10) <= todaySoonCutoff;
             const urgent = dueSoon && (item.deadlineStrictness === "hard" || item.deadlineStrictness === "important");

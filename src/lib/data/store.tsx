@@ -16,10 +16,12 @@ import type {
   ScheduleBlock,
   ScheduleFeedback,
   WorkSession,
+  WorkStage,
 } from "@/types/models";
 import {
   calculateBreakPreferenceAdjustment,
   calculateFreeTimePriorityAdjustment,
+  renumberStages,
   type SchedulableWorkItem,
 } from "@/scheduling-engine";
 
@@ -36,6 +38,9 @@ interface AppState {
   fixedBlocks: ScheduleBlock[];
   workSessions: WorkSession[];
   feedback: ScheduleFeedback[];
+  /** Stages for decomposed work items (Phase 4), across every item — grouped by `workItemId` where
+   *  needed. Empty for any item the student hasn't chosen to plan in stages. */
+  stages: WorkStage[];
   /** At most one work session in progress at a time (Phase 3A, Part 4). */
   activeSession: ActiveWorkSession | null;
   /**
@@ -74,6 +79,7 @@ const EMPTY_STATE: AppState = {
   fixedBlocks: [],
   workSessions: [],
   feedback: [],
+  stages: [],
   activeSession: null,
   onboardingComplete: true,
 };
@@ -91,6 +97,13 @@ interface AppDataContextValue extends AppState {
   removeWorkItem: (id: string) => void;
   markWorkItemComplete: (id: string) => void;
   markWorkItemIncomplete: (id: string) => void;
+  /** Accepts a (possibly student-edited) proposed stage breakdown for a work item (Phase 4). */
+  acceptDecomposition: (workItemId: string, stages: WorkStage[]) => void;
+  /** "Keep as one task" — clears a work item's stages. */
+  clearStages: (workItemId: string) => void;
+  updateStage: (id: string, patch: Partial<Pick<WorkStage, "title" | "estimatedMinutes" | "status" | "actualMinutes">>) => void;
+  removeStage: (id: string) => void;
+  addStage: (workItemId: string, title: string, estimatedMinutes: number) => void;
   completeBlock: (
     block: ScheduleBlock,
     actualMinutes: number,
@@ -158,6 +171,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       // Existing save (even one from before `onboardingComplete` existed) — never force onboarding.
       next.onboardingComplete = next.onboardingComplete ?? true;
       next.activeSession = next.activeSession ?? null;
+      // Pre-Phase-4 saves have no `stages` array at all — every existing work item simply behaves
+      // as a single-stage item until the student chooses to decompose it (Phase 4, Part 37).
+      next.stages = next.stages ?? [];
     } else {
       next = {
         workItems: [],
@@ -166,6 +182,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         fixedBlocks: [],
         workSessions: [],
         feedback: [],
+        stages: [],
         activeSession: null,
         // A raw value that failed to parse (corrupt, not just absent) is treated as an existing
         // user with damaged data, not a first-timer — don't send someone who already had a plan
@@ -222,6 +239,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       // an orphaned block referencing a work item that no longer exists would just be confusing.
       // Past WorkSessions are left alone; they're a record of time actually spent, not a live view.
       fixedBlocks: s.fixedBlocks.filter((b) => b.workItemId !== id),
+      stages: s.stages.filter((stage) => stage.workItemId !== id),
       activeSession: s.activeSession?.workItemId === id ? null : s.activeSession,
     }));
   }, []);
@@ -246,6 +264,76 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  /** Accepts a proposed (or edited-before-accepting) stage breakdown for a work item (Phase 4,
+   *  Part 9) — replaces any stages that item already had, so re-accepting after editing the draft
+   *  doesn't leave stale stages behind. */
+  const acceptDecomposition = useCallback((workItemId: string, stages: WorkStage[]) => {
+    setState((s) => ({ ...s, stages: [...s.stages.filter((st) => st.workItemId !== workItemId), ...stages] }));
+  }, []);
+
+  /** "Keep as one task" (Phase 4, Part 9) — clears a decomposition; the item schedules as a single
+   *  unit again, exactly as it did before Phase 4. */
+  const clearStages = useCallback((workItemId: string) => {
+    setState((s) => ({ ...s, stages: s.stages.filter((st) => st.workItemId !== workItemId) }));
+  }, []);
+
+  /** Edits one stage's name/duration, or its completion state (Phase 4, Part 10/13). A status
+   *  change cascades to the parent work item's own status once every stage is complete, the same
+   *  way `completeBlock` does for a stage finished via a scheduled session. */
+  const updateStage = useCallback(
+    (id: string, patch: Partial<Pick<WorkStage, "title" | "estimatedMinutes" | "status" | "actualMinutes">>) => {
+      setState((s) => {
+        const nextStages = s.stages.map((st) => (st.id === id ? { ...st, ...patch } : st));
+        if (patch.status === undefined) return { ...s, stages: nextStages };
+
+        const target = nextStages.find((st) => st.id === id);
+        if (!target) return { ...s, stages: nextStages };
+        const siblings = nextStages.filter((st) => st.workItemId === target.workItemId);
+        const allStagesDone = siblings.length > 0 && siblings.every((st) => st.status === "completed");
+        return {
+          ...s,
+          stages: nextStages,
+          workItems: s.workItems.map((item) => {
+            if (item.id !== target.workItemId) return item;
+            const nextStatus = allStagesDone ? "completed" : item.status === "completed" ? "in-progress" : item.status;
+            return { ...item, status: nextStatus, updatedAt: new Date().toISOString() };
+          }),
+        };
+      });
+    },
+    []
+  );
+
+  /** Removes one stage from a plan and re-links the remaining ones so the dependency chain and
+   *  ordering stay valid (Phase 4, Part 10) — never leaves a dangling `dependsOnStageId`. */
+  const removeStage = useCallback((id: string) => {
+    setState((s) => {
+      const target = s.stages.find((st) => st.id === id);
+      if (!target) return s;
+      const others = s.stages.filter((st) => st.workItemId !== target.workItemId);
+      const siblings = s.stages.filter((st) => st.workItemId === target.workItemId && st.id !== id);
+      return { ...s, stages: [...others, ...renumberStages(siblings)] };
+    });
+  }, []);
+
+  /** Adds a custom stage at the end of a work item's plan (Phase 4, Part 9/10). */
+  const addStage = useCallback((workItemId: string, title: string, estimatedMinutes: number) => {
+    setState((s) => {
+      const siblings = s.stages.filter((st) => st.workItemId === workItemId);
+      const others = s.stages.filter((st) => st.workItemId !== workItemId);
+      const newStage: WorkStage = {
+        id: newId(`${workItemId}_stage`),
+        workItemId,
+        title,
+        stageType: "custom",
+        order: siblings.length,
+        estimatedMinutes,
+        status: "not-started",
+      };
+      return { ...s, stages: [...others, ...renumberStages([...siblings, newStage])] };
+    });
+  }, []);
+
   const completeBlock = useCallback(
     (block: ScheduleBlock, actualMinutes: number, estimateFeedback?: WorkSession["estimateFeedback"]) => {
       setState((s) => {
@@ -261,6 +349,36 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
           minutesSpent: actualMinutes,
           estimateFeedback,
         };
+        // A finished block's workItemId is either a real work item or, for a decomposed item, a
+        // stage id (Phase 4) — the two cascade differently, so the stage case is handled first and
+        // returns early rather than trying to make one code path cover both shapes.
+        const stage = block.workItemId ? s.stages.find((st) => st.id === block.workItemId) : undefined;
+        if (stage) {
+          const newActual = (stage.actualMinutes ?? 0) + actualMinutes;
+          const stageCompleted = newActual >= stage.estimatedMinutes;
+          const nextStages = s.stages.map((st) =>
+            st.id === stage.id
+              ? { ...st, actualMinutes: newActual, status: (stageCompleted ? "completed" : "in-progress") as WorkStage["status"] }
+              : st
+          );
+          const siblingStages = nextStages.filter((st) => st.workItemId === stage.workItemId);
+          const allStagesDone = siblingStages.every((st) => st.status === "completed");
+          return {
+            ...s,
+            fixedBlocks: [...s.fixedBlocks, { ...block, id: newId("done"), status: "completed" }],
+            workSessions: [...s.workSessions, session],
+            stages: nextStages,
+            // The parent work item's own `actualMinutes` is left untouched — its progress is
+            // tracked entirely through its stages (Part 14/26), never double-counted alongside them.
+            workItems: s.workItems.map((item) =>
+              item.id === stage.workItemId
+                ? { ...item, status: allStagesDone ? "completed" : "in-progress", updatedAt: new Date().toISOString() }
+                : item
+            ),
+            activeSession: s.activeSession?.blockId === block.id ? null : s.activeSession,
+          };
+        }
+
         return {
           ...s,
           // A fresh id, not `block.id`: the engine's block ids are deterministic (derived from
@@ -481,6 +599,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       removeWorkItem,
       markWorkItemComplete,
       markWorkItemIncomplete,
+      acceptDecomposition,
+      clearStages,
+      updateStage,
+      removeStage,
+      addStage,
       completeBlock,
       skipBlock,
       moveBlock,
@@ -506,6 +629,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       removeWorkItem,
       markWorkItemComplete,
       markWorkItemIncomplete,
+      acceptDecomposition,
+      clearStages,
+      updateStage,
+      removeStage,
+      addStage,
       completeBlock,
       skipBlock,
       moveBlock,

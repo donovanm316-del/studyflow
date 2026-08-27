@@ -18,6 +18,16 @@ export { splitTask, sessionBounds, isSplittableWorkType } from "./splitting";
 export { calculateWorkloadStatus } from "./workload-status";
 export { explainScheduleDecision } from "./explanation";
 export { diffSchedules } from "./schedule-diff";
+export {
+  isDecomposable,
+  suggestStages,
+  isStageEligible,
+  nextEligibleStage,
+  stageProgress,
+  totalRemainingStageMinutes,
+  renumberStages,
+} from "./decomposition";
+export type { StageProgress } from "./decomposition";
 export { minutesOfDay, formatMinutesAsHoursMinutes, blockDurationMinutes, toDateOnly } from "./date-utils";
 
 export type {

@@ -117,6 +117,40 @@ export interface ProjectMilestone {
   status: WorkItemStatus;
 }
 
+/**
+ * A labeled phase of a decomposed work item (Phase 4) — e.g. "Research" or "Draft" for a project,
+ * or "Practice questions" for test prep. Stages form a simple linear chain via `dependsOnStageId`
+ * (each depends on at most the one immediately before it), which is sufficient for every
+ * decomposition template the app generates — see `scheduling-engine/decomposition.ts`. A stage is
+ * a schedulable unit in its own right: the scheduling engine offers only the earliest not-yet-
+ * completed, dependency-satisfied stage of a decomposed item, never the whole item at once.
+ */
+export interface WorkStage {
+  id: string;
+  workItemId: string;
+  title: string;
+  stageType: StageType;
+  /** Position in the sequence, 0-based. Also used to derive `dependsOnStageId` after edits. */
+  order: number;
+  estimatedMinutes: number;
+  actualMinutes?: number;
+  status: WorkItemStatus;
+  /** The stage that must be completed before this one becomes eligible for scheduling. */
+  dependsOnStageId?: string;
+}
+
+export type StageType =
+  | "understand-prompt"
+  | "research"
+  | "outline"
+  | "draft"
+  | "revise"
+  | "finalize"
+  | "review-concepts"
+  | "practice"
+  | "final-review"
+  | "custom";
+
 /** Any recurring or fixed obligation outside of schoolwork: sports, clubs, jobs, family commitments. */
 export interface Commitment {
   id: string;

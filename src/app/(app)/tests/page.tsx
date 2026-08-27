@@ -7,10 +7,12 @@ import { TaskRow } from "@/components/tasks/TaskRow";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { WorkItemModal } from "@/components/tasks/WorkItemModal";
+import { StageManager } from "@/components/tasks/StageManager";
 import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
-import { changesSchedule, formatDueLabel } from "@/lib/schedule-format";
+import { blockMatchesWorkItem, changesSchedule, formatDueLabel } from "@/lib/schedule-format";
 import { todayDateOnly } from "@/lib/now";
+import { totalRemainingStageMinutes } from "@/scheduling-engine";
 import type { SchedulableWorkItem } from "@/scheduling-engine";
 
 const KIND_LABEL: Record<string, string> = { test: "Test", quiz: "Quiz" };
@@ -22,8 +24,21 @@ function addDaysToDateOnly(dateOnly: string, days: number): string {
 }
 
 export default function TestsPage() {
-  const { workItems, planningProfile, addWorkItem, updateWorkItem, removeWorkItem, markWorkItemComplete, markWorkItemIncomplete } =
-    useAppData();
+  const {
+    workItems,
+    planningProfile,
+    stages,
+    addWorkItem,
+    updateWorkItem,
+    removeWorkItem,
+    markWorkItemComplete,
+    markWorkItemIncomplete,
+    acceptDecomposition,
+    clearStages,
+    updateStage,
+    removeStage,
+    addStage,
+  } = useAppData();
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<SchedulableWorkItem | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -62,27 +77,41 @@ export default function TestsPage() {
           />
         ) : (
           items.map((item) => {
-            const remainingMinutes = Math.max(0, item.estimatedMinutes - (item.actualMinutes ?? 0));
-            const plannedSessionCount = result.blocks.filter((b) => b.workItemId === item.id && b.status === "planned").length;
+            const itemStages = stages.filter((s) => s.workItemId === item.id);
+            const remainingMinutes =
+              itemStages.length > 0 ? totalRemainingStageMinutes(itemStages) : Math.max(0, item.estimatedMinutes - (item.actualMinutes ?? 0));
+            const plannedSessionCount = result.blocks.filter(
+              (b) => blockMatchesWorkItem(b, item.id, stages) && b.status === "planned"
+            ).length;
             const dueSoon = item.dueDate.slice(0, 10) <= addDaysToDateOnly(today, 1);
             const urgent = dueSoon && (item.deadlineStrictness === "hard" || item.deadlineStrictness === "important");
             return (
-              <TaskRow
-                key={item.id}
-                title={item.title}
-                subject={item.subject}
-                dueLabel={formatDueLabel(item.dueDate, today)}
-                status={item.status}
-                kindLabel={KIND_LABEL[item.kind] ?? item.kind}
-                estimatedMinutes={item.estimatedMinutes}
-                remainingMinutes={remainingMinutes}
-                plannedSessionCount={plannedSessionCount}
-                urgent={urgent}
-                onToggleComplete={() =>
-                  item.status === "completed" ? markWorkItemIncomplete(item.id) : markWorkItemComplete(item.id)
-                }
-                onEdit={() => setEditing(item)}
-              />
+              <div key={item.id}>
+                <TaskRow
+                  title={item.title}
+                  subject={item.subject}
+                  dueLabel={formatDueLabel(item.dueDate, today)}
+                  status={item.status}
+                  kindLabel={KIND_LABEL[item.kind] ?? item.kind}
+                  estimatedMinutes={item.estimatedMinutes}
+                  remainingMinutes={remainingMinutes}
+                  plannedSessionCount={plannedSessionCount}
+                  urgent={urgent}
+                  onToggleComplete={() =>
+                    item.status === "completed" ? markWorkItemIncomplete(item.id) : markWorkItemComplete(item.id)
+                  }
+                  onEdit={() => setEditing(item)}
+                />
+                <StageManager
+                  item={item}
+                  stages={itemStages}
+                  onAccept={(newStages) => acceptDecomposition(item.id, newStages)}
+                  onClear={() => clearStages(item.id)}
+                  onUpdateStage={updateStage}
+                  onRemoveStage={removeStage}
+                  onAddStage={(title, minutes) => addStage(item.id, title, minutes)}
+                />
+              </div>
             );
           })
         )}

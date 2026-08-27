@@ -23,6 +23,7 @@ import { calculateDailyCapacity, calculateFeedbackAdjustment } from "./capacity"
 import { findAvailableWindows, subtractIntervals, type TimeWindow } from "./availability";
 import { calculatePriority, explainPriority } from "./priority";
 import { explainScheduleDecision } from "./explanation";
+import { nextEligibleStage } from "./decomposition";
 import { isSplittableWorkType, sessionBounds, splitTask, type DaySlot, type PlannedChunk } from "./splitting";
 import { blockDurationMinutes, combineDateAndMinutes, dateRange, diffInDays, toDateOnly } from "./date-utils";
 import { calculateWorkloadStatus } from "./workload-status";
@@ -37,7 +38,7 @@ import type {
   SchedulableWorkItem,
   WorkAheadSuggestion,
 } from "./types";
-import type { CourseRigor, ScheduleBlock } from "@/types/models";
+import type { CourseRigor, ScheduleBlock, WorkStage } from "@/types/models";
 
 interface DayState {
   windows: TimeWindow[];
@@ -65,9 +66,36 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
   const today = toDateOnly(now);
   const notCompleted = input.workItems.filter((item) => item.status !== "completed");
 
-  const inRange = notCompleted.filter(
-    (item) => toDateOnly(item.dueDate) <= rangeEnd || diffInDays(now, item.dueDate) <= 0
-  );
+  // Phase 4: a work item with decomposed stages is never itself schedulable — only its single
+  // next-eligible stage is (see `nextEligibleStage`). `unitFor` swaps a decomposed item for a
+  // stand-in `SchedulableWorkItem` carrying the active stage's id/title/minutes but everything
+  // else (weight, deadline, workType, rigor, kind) inherited from the parent, so the rest of this
+  // function — priority, capacity, splitting, placement — needs no separate code path for stages.
+  // Returns `null` for a decomposed item with no eligible stage left (e.g. all completed but the
+  // parent item's own status hasn't caught up yet), meaning it contributes nothing to placement.
+  const stagesByItem = new Map<string, WorkStage[]>();
+  for (const stage of input.stages ?? []) {
+    if (!stagesByItem.has(stage.workItemId)) stagesByItem.set(stage.workItemId, []);
+    stagesByItem.get(stage.workItemId)!.push(stage);
+  }
+  function unitFor(item: SchedulableWorkItem): SchedulableWorkItem | null {
+    const stages = stagesByItem.get(item.id);
+    if (!stages || stages.length === 0) return item;
+    const active = nextEligibleStage(stages);
+    if (!active) return null;
+    return {
+      ...item,
+      id: active.id,
+      title: `${item.title} — ${active.title}`,
+      estimatedMinutes: active.estimatedMinutes,
+      actualMinutes: active.actualMinutes ?? 0,
+    };
+  }
+
+  const inRange = notCompleted
+    .filter((item) => toDateOnly(item.dueDate) <= rangeEnd || diffInDays(now, item.dueDate) <= 0)
+    .map(unitFor)
+    .filter((unit): unit is SchedulableWorkItem => unit !== null);
   const outOfRangeSoon = notCompleted.filter(
     (item) =>
       toDateOnly(item.dueDate) > rangeEnd &&
@@ -108,9 +136,20 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
 
   // Priorities are computed for every not-yet-completed item (in and out of range) so callers
   // like the Dashboard can show an explainable ranking even for work this call doesn't place.
+  // For a decomposed item, the score reflects its *active stage* (what's actually next) — stored
+  // under both the parent item's id (so existing lookups like Dashboard's `priorities[item.id]`
+  // keep working unchanged) and the stage's own id (so placement/explanation lookups, which key
+  // off whatever id ended up on the block, also resolve).
   const priorities: Record<string, PriorityBreakdown> = {};
   for (const item of notCompleted) {
-    priorities[item.id] = calculatePriority(item, { now, remainingMinutes: remainingOf(item) });
+    const unit = unitFor(item);
+    if (!unit) {
+      priorities[item.id] = calculatePriority(item, { now, remainingMinutes: 0 });
+      continue;
+    }
+    const breakdown = calculatePriority(unit, { now, remainingMinutes: remainingOf(unit) });
+    priorities[item.id] = { ...breakdown, workItemId: item.id };
+    if (unit.id !== item.id) priorities[unit.id] = breakdown;
   }
 
   // Placement order: near-term deadlines are protected first (see URGENT_PROTECTION_HORIZON_DAYS),

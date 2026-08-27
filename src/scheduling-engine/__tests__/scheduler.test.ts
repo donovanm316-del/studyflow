@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { generateSchedule } from "../scheduler";
 import { minutesOfDay, toDateOnly } from "../date-utils";
-import type { ScheduleBlock } from "@/types/models";
+import { suggestStages } from "../decomposition";
+import type { ScheduleBlock, WorkStage } from "@/types/models";
 import { makeAssignment, makeCommitment, makeFeedback, makePlanningProfile, makeProject, makeTest, NOW } from "./fixtures";
 
 function workBlocks(blocks: ScheduleBlock[]): ScheduleBlock[] {
@@ -963,5 +964,213 @@ describe("Phase 3B — scheduling decision explanations", () => {
     });
 
     expect(result.decisionExplanations[item.id]).toBeUndefined();
+  });
+});
+
+describe("Phase 4 — stage-based scheduling", () => {
+  it("only offers the active (first eligible) stage — never the whole decomposed item", () => {
+    const project = makeProject({ estimatedMinutes: 200, dueDate: "2026-08-30T23:59:00" });
+    const stages = suggestStages(project)!;
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-30",
+      now: NOW,
+      workItems: [project],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+      stages,
+    });
+
+    const placedIds = new Set(result.blocks.filter((b) => b.workItemId).map((b) => b.workItemId));
+    expect(placedIds.has(stages[0].id)).toBe(true); // Research
+    expect(placedIds.has(stages[1].id)).toBe(false); // Outline — not eligible yet
+    expect(placedIds.has(project.id)).toBe(false); // the parent itself is never a schedulable unit
+  });
+
+  it("inherits priority (weight, deadline, urgency) from the parent item, not a default", () => {
+    const highWeightProject = makeProject({ weight: "high", deadlineStrictness: "hard", estimatedMinutes: 200 });
+    const lowWeightProject = makeProject({ weight: "low", deadlineStrictness: "flexible", estimatedMinutes: 200, id: "p_low" });
+    const highStages = suggestStages(highWeightProject)!;
+    const lowStages = suggestStages(lowWeightProject)!;
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-30",
+      now: NOW,
+      workItems: [highWeightProject, lowWeightProject],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+      stages: [...highStages, ...lowStages],
+    });
+
+    expect(result.priorities[highStages[0].id].score).toBeGreaterThan(result.priorities[lowStages[0].id].score);
+    // The parent-keyed entry mirrors the active stage's score, so existing lookups (e.g. Dashboard) keep working.
+    expect(result.priorities[highWeightProject.id].score).toBe(result.priorities[highStages[0].id].score);
+  });
+
+  it("protects a hard-deadline stage the same way a hard-deadline item is protected", () => {
+    const project = makeProject({
+      estimatedMinutes: 400,
+      deadlineStrictness: "hard",
+      dueDate: "2026-08-24T23:59:00",
+    });
+    const stages = suggestStages(project)!;
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [project],
+      commitments: [],
+      // A 20-minute window can't possibly fit the ~100-minute Research stage, so it's guaranteed
+      // to go unscheduled — proving the hard-deadline warning fires for a *stage*, not just a plain item.
+      planningProfile: makePlanningProfile({ dailyAvailability: [{ dayOfWeek: 1, earliest: "15:00", latest: "15:20" }] }),
+      stages,
+    });
+
+    expect(result.warnings.some((w) => w.kind === "unscheduled-hard-deadline")).toBe(true);
+  });
+
+  it("respects fixed commitments when placing an active stage", () => {
+    const commitment = makeCommitment({ recurrence: { type: "weekly", daysOfWeek: [1] }, startTime: "15:00", endTime: "21:00" });
+    const project = makeProject({ estimatedMinutes: 150, dueDate: "2026-08-24T23:59:00" });
+    const stages = suggestStages(project)!;
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [project],
+      commitments: [commitment],
+      planningProfile: makePlanningProfile(),
+      stages,
+    });
+
+    expect(result.blocks.some((b) => b.workItemId === stages[0].id && toDateOnly(b.start) === "2026-08-24")).toBe(false);
+  });
+
+  it("never places more of a stage than the day's soft capacity allows", () => {
+    const project = makeProject({ estimatedMinutes: 300, dueDate: "2026-08-24T23:59:00" });
+    const stages = suggestStages(project)!;
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [project],
+      commitments: [],
+      planningProfile: makePlanningProfile({ workloadTolerance: "light" }),
+      stages,
+    });
+
+    const mondayMinutes = totalMinutes(result.blocks.filter((b) => b.workItemId === stages[0].id));
+    expect(mondayMinutes).toBeLessThanOrEqual(150); // "light" tolerance ceiling
+  });
+
+  it("reserves a break between two of a stage's own sessions when autoBreaks is on", () => {
+    const project = makeProject({ estimatedMinutes: 240, dueDate: "2026-08-24T23:59:00" });
+    const stages = suggestStages(project)!;
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [project],
+      commitments: [],
+      planningProfile: makePlanningProfile({ autoBreaks: true, breakPreference: "frequent", workloadTolerance: "heavy" }),
+      stages,
+    });
+
+    const stageBlocks = result.blocks.filter((b) => b.workItemId === stages[0].id).sort((a, b) => (a.start < b.start ? -1 : 1));
+    if (stageBlocks.length > 1) {
+      expect(stageBlocks[1].start >= stageBlocks[0].end).toBe(true);
+      expect(result.blocks.some((b) => b.origin === "break" && b.start >= stageBlocks[0].end && b.start < stageBlocks[1].start)).toBe(true);
+    } else {
+      expect(stageBlocks.length).toBeGreaterThan(0); // sanity: something was placed at all
+    }
+  });
+
+  it("never double-counts a decomposed item's total workload against available time", () => {
+    const project = makeProject({ estimatedMinutes: 200, dueDate: "2026-08-30T23:59:00" });
+    const stages = suggestStages(project)!;
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-30",
+      now: NOW,
+      workItems: [project],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+      stages,
+    });
+
+    // Only the active stage (Research) is real demand right now — never the parent's full 200 min,
+    // and never stage-total + parent-total.
+    expect(result.workloadStatus.estimatedRemainingMinutes).toBe(stages[0].estimatedMinutes);
+  });
+
+  it("replanning does not let a later stage jump ahead just because an earlier one was skipped (left incomplete)", () => {
+    const project = makeProject({ estimatedMinutes: 200, dueDate: "2026-08-30T23:59:00" });
+    const stages = suggestStages(project)!;
+    // Research completed, Outline explicitly left not-started (the student "skipped" it) —
+    // Draft must never become schedulable while Outline is still incomplete.
+    const afterSkippedOutline: WorkStage[] = stages.map((s) => (s.stageType === "research" ? { ...s, status: "completed" } : s));
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-30",
+      now: NOW,
+      workItems: [project],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+      stages: afterSkippedOutline,
+    });
+
+    const placedIds = new Set(result.blocks.filter((b) => b.workItemId).map((b) => b.workItemId));
+    expect(placedIds.has(stages[1].id)).toBe(true); // Outline
+    expect(placedIds.has(stages[2].id)).toBe(false); // Draft must not jump ahead
+  });
+
+  it("respects a manual move of a stage's session — no duplicate placement elsewhere", () => {
+    const project = makeProject({ estimatedMinutes: 200, dueDate: "2026-08-30T23:59:00" });
+    const stages = suggestStages(project)!;
+    const researchMinutes = stages[0].estimatedMinutes;
+
+    const movedBlock: ScheduleBlock = {
+      id: "moved_1",
+      userId: "u1",
+      workItemId: stages[0].id,
+      workItemKind: "project",
+      title: `${project.title} — Research`,
+      start: "2026-08-29T15:00",
+      end: `2026-08-29T${String(15 + Math.floor(researchMinutes / 60)).padStart(2, "0")}:${String(researchMinutes % 60).padStart(2, "0")}`,
+      origin: "manual-override",
+      status: "planned",
+    };
+
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-30",
+      now: NOW,
+      workItems: [project],
+      commitments: [],
+      existingBlocks: [movedBlock],
+      planningProfile: makePlanningProfile(),
+      stages,
+    });
+
+    const generatedResearchBlocks = result.blocks.filter((b) => b.workItemId === stages[0].id && b.origin === "generated");
+    expect(generatedResearchBlocks).toHaveLength(0);
+    expect(result.blocks).toContainEqual(movedBlock);
   });
 });

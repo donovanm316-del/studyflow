@@ -9,6 +9,7 @@ import type {
   CourseRigor,
   DeadlineStrictness,
   FreeTimePriority,
+  StageType,
   WorkloadTolerance,
   WorkType,
 } from "@/types/models";
@@ -159,6 +160,54 @@ export const WORK_AHEAD_HORIZON_DAYS = 14;
 export const FEEDBACK_STREAK_LENGTH = 2;
 export const FEEDBACK_ADJUSTMENT_DECREASE = 0.85;
 export const FEEDBACK_ADJUSTMENT_INCREASE = 1.15;
+
+/**
+ * Task decomposition (Phase 4). Only these work types are ever considered for automatic
+ * decomposition — routine homework/reading/study-session never qualify regardless of duration,
+ * per the spec's "the system should be conservative" instruction. Thresholds are chosen so the
+ * smallest resulting stage (lowest fraction × minimum total) always clears `MIN_CHUNK_MINUTES`,
+ * so no generated stage can end up too small for the scheduler to ever place.
+ */
+export const DECOMPOSITION_MIN_MINUTES: Partial<Record<WorkType, number>> = {
+  project: 120,
+  "long-term": 120,
+  essay: 150,
+  "test-prep": 60,
+  "quiz-prep": 60,
+};
+
+export interface StageTemplateEntry {
+  stageType: StageType;
+  title: string;
+  /** Share of the item's total estimated minutes this stage gets. Each template sums to 1. */
+  fraction: number;
+}
+
+/** Projects and other long-term work: research → outline → draft → revise → finalize. */
+export const PROJECT_STAGE_TEMPLATE: StageTemplateEntry[] = [
+  { stageType: "research", title: "Research", fraction: 0.25 },
+  { stageType: "outline", title: "Outline", fraction: 0.15 },
+  { stageType: "draft", title: "Draft", fraction: 0.35 },
+  { stageType: "revise", title: "Revise", fraction: 0.15 },
+  { stageType: "finalize", title: "Finalize", fraction: 0.1 },
+];
+
+/** Essays get one extra up-front stage compared to projects: making sure the prompt is understood. */
+export const ESSAY_STAGE_TEMPLATE: StageTemplateEntry[] = [
+  { stageType: "understand-prompt", title: "Understand prompt", fraction: 0.08 },
+  { stageType: "research", title: "Research / gather evidence", fraction: 0.17 },
+  { stageType: "outline", title: "Outline", fraction: 0.15 },
+  { stageType: "draft", title: "Draft", fraction: 0.35 },
+  { stageType: "revise", title: "Revise", fraction: 0.17 },
+  { stageType: "finalize", title: "Finalize", fraction: 0.08 },
+];
+
+/** Test/quiz prep spread across sessions rather than one generic study block (Phase 4, Part 6). */
+export const TEST_PREP_STAGE_TEMPLATE: StageTemplateEntry[] = [
+  { stageType: "review-concepts", title: "Review concepts", fraction: 0.4 },
+  { stageType: "practice", title: "Practice questions", fraction: 0.4 },
+  { stageType: "final-review", title: "Final review", fraction: 0.2 },
+];
 
 /**
  * Thresholds for `calculateWorkloadStatus` (Phase 3A, Part 6), expressed as

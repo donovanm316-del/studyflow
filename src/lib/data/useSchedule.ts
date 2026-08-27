@@ -7,7 +7,7 @@ import { nowLocalIso } from "@/lib/now";
 
 /** Runs the scheduling engine over the current store state for the given date range. */
 export function useSchedule(rangeStart: string, rangeEnd: string): GenerateScheduleResult {
-  const { workItems, commitments, planningProfile, fixedBlocks, feedback } = useAppData();
+  const { workItems, commitments, planningProfile, fixedBlocks, feedback, stages } = useAppData();
 
   return useMemo(
     () =>
@@ -21,7 +21,8 @@ export function useSchedule(rangeStart: string, rangeEnd: string): GenerateSched
         planningProfile,
         existingBlocks: fixedBlocks,
         feedback,
+        stages,
       }),
-    [workItems, commitments, planningProfile, fixedBlocks, feedback, rangeStart, rangeEnd]
+    [workItems, commitments, planningProfile, fixedBlocks, feedback, stages, rangeStart, rangeEnd]
   );
 }

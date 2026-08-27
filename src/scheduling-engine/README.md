@@ -32,10 +32,28 @@ engine:
 | `workload-status.ts` | `calculateWorkloadStatus` — ahead/on-track/getting-tight/at-risk, from the same demand/availability numbers `detectOverload` uses |
 | `explanation.ts` | `explainScheduleDecision` — turns priority/urgency/session-count data the engine already has into a structured "why was this scheduled" breakdown (Phase 3B) |
 | `schedule-diff.ts` | `diffSchedules` — compares two `ScheduleBlock[]` snapshots and reports only the work items whose footprint actually changed (Phase 3B) |
+| `decomposition.ts` | `suggestStages`, `nextEligibleStage`, `isStageEligible`, `stageProgress`, `renumberStages` — turns a large project/essay/test-prep item into an ordered `WorkStage[]` and answers which single stage, if any, is eligible to be scheduled right now (Phase 4) |
 | `scheduler.ts` | `generateSchedule`, `scheduleTask`, `detectOverload`, `replanRemainingSchedule` — orchestrates everything above |
 | `index.ts` | The only module the UI should import from |
 
-## Current status (Phase 2 + 2.5 + 3A + 3B)
+## Current status (Phase 2 + 2.5 + 3A + 3B + 4)
+
+**Phase 4 additions:** `decomposition.ts` proposes a stage breakdown for large projects, essays, and
+test/quiz prep (conservatively — routine homework/reading never qualify, see
+`DECOMPOSITION_MIN_MINUTES`), with each stage's minutes rounded from a fixed per-workType template
+and the rounding remainder absorbed by the last stage so stages always sum to exactly the item's
+total (never `total + total`). Stages form a simple linear dependency chain; `generateSchedule`
+never schedules a decomposed item as a whole — internally it substitutes the item for its single
+next-eligible stage (`nextEligibleStage`) wherever a schedulable unit is needed, so priority,
+capacity, splitting, and placement all reuse the exact same code path a plain item goes through.
+Priority scores are stored under both the parent item's id and the active stage's id, so existing
+per-item lookups (e.g. Dashboard's "coming up" ranking) keep working unchanged while
+placement/explanation lookups (keyed by whatever id ended up on the actual block) also resolve.
+`src/lib/next-best-action.ts` (outside this directory, deliberately not a second scheduler) reads a
+`generateSchedule` result plus the active session and picks the single chronologically-next planned
+work block to recommend — the engine already resolved priority/capacity conflicts when it decided
+what to place and when, so the earliest remaining block doubles as the highest-priority
+recommendation without any separate ranking logic.
 
 **Phase 3B additions:** `explainScheduleDecision` builds a `ScheduleDecisionExplanation` (one-line
 `primaryReason` reusing `explainPriority`, plus structured `bullets`: importance, deadline
@@ -92,3 +110,8 @@ for this module — see Part 24 of the Phase 2 spec.
 - `calculateWorkloadStatus` and `dailyForecast` inherit the single-per-range daily capacity target
   above — they're an honest reflection of what the engine actually computed for that call, not an
   independently-tuned "true" forecast.
+- A decomposed item only ever contributes its *active* stage's minutes to demand/capacity/forecast
+  numbers — later stages in the chain aren't reserved for in advance. This matches the spec's
+  worked examples (complete a stage → the next one becomes schedulable on the next call) but means
+  a student who completes stages very close to the item's deadline may find the remaining stages
+  compressed into less time than an up-front, whole-item plan would have reserved.

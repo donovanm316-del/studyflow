@@ -13,6 +13,7 @@ import type {
   ScheduleBlock,
   ScheduleFeedback,
   Test,
+  WorkStage,
 } from "@/types/models";
 
 /** Anything the engine can schedule time for. */
@@ -39,6 +40,14 @@ export interface GenerateScheduleInput {
    * capacity.ts. Not required; omitting it (or passing none) means no adjustment is applied.
    */
   feedback?: ScheduleFeedback[];
+  /**
+   * Stages for any decomposed work items (Phase 4), across all items — grouped by `workItemId`
+   * internally. A work item with no entries here (or all of whose stages are completed) is
+   * scheduled as a single unit exactly as before; one with eligible stages has only its next
+   * eligible stage (see `nextEligibleStage` in decomposition.ts) treated as schedulable, never the
+   * item as a whole and never more than one stage at a time.
+   */
+  stages?: WorkStage[];
 }
 
 /** One factor breakdown behind a single work item's priority score (Part 3 / Part 15). */

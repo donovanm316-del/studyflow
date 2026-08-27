@@ -40,6 +40,21 @@ describe("calculateEstimateAccuracy", () => {
     expect(result!.avgDiffMinutes).toBe(0);
   });
 
+  it("treats a decomposed work item's stage-scoped sessions the same as any other (Phase 4, Part 25-27)", () => {
+    // A stage's sessions carry the stage's id as workItemId (see scheduling-engine/decomposition.ts)
+    // — this function is generic over workItemId, so stage data contributes to estimate accuracy
+    // exactly once each, with no special-casing and no double counting.
+    const sessions = [
+      makeSession({ workItemId: "p1_stage_2", plannedMinutes: 60, minutesSpent: 75 }),
+      makeSession({ workItemId: "regular_item", plannedMinutes: 30, minutesSpent: 30 }),
+    ];
+    const result = calculateEstimateAccuracy(sessions);
+    expect(result).not.toBeNull();
+    expect(result!.sessionCount).toBe(2);
+    expect(result!.avgEstimatedMinutes).toBe(45);
+    expect(result!.avgActualMinutes).toBe(Math.round((75 + 30) / 2));
+  });
+
   it("ignores sessions without both an estimate and an actual", () => {
     const sessions = [makeSession({ plannedMinutes: 30, minutesSpent: 40 }), makeSession({ postponed: true, minutesSpent: undefined })];
     expect(calculateEstimateAccuracy(sessions)!.sessionCount).toBe(1);
