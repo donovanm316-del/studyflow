@@ -12,7 +12,7 @@ import { nowLocalIso } from "@/lib/now";
  * two implementations that could drift (Phase 4.5B, Part 6).
  */
 export function useScheduleInput(rangeStart: string, rangeEnd: string): GenerateScheduleInput {
-  const { workItems, commitments, planningProfile, fixedBlocks, feedback, stages } = useAppData();
+  const { workItems, commitments, planningProfile, fixedBlocks, feedback, stages, workSessions } = useAppData();
 
   return useMemo(
     () => ({
@@ -26,8 +26,9 @@ export function useScheduleInput(rangeStart: string, rangeEnd: string): Generate
       existingBlocks: fixedBlocks,
       feedback,
       stages,
+      workSessions,
     }),
-    [workItems, commitments, planningProfile, fixedBlocks, feedback, stages, rangeStart, rangeEnd]
+    [workItems, commitments, planningProfile, fixedBlocks, feedback, stages, workSessions, rangeStart, rangeEnd]
   );
 }
 

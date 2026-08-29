@@ -109,6 +109,7 @@ export default function AssignmentsPage() {
                 <DeadlineInsight
                   buffer={result.deadlineCapacities[item.id] ? summarizeBuffer(result.deadlineCapacities[item.id]) : null}
                   startRecommendation={recommendStartDate(item, result, stages)}
+                  estimate={result.estimateAdjustments[item.id]}
                 />
                 <StageManager
                   item={item}

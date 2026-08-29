@@ -4,7 +4,7 @@
  * neither needs the other. Every function here returns `null` when there isn't enough data to say
  * something honest, rather than showing a number built on one or two data points.
  */
-import type { ScheduleFeedback, WorkSession } from "@/types/models";
+import type { ScheduleFeedback, WorkSession, WorkType } from "@/types/models";
 
 /** Below this many data points, a "typical pattern" claim would be reading tea leaves. */
 export const MIN_SESSIONS_FOR_HABIT_INSIGHT = 5;
@@ -32,6 +32,76 @@ export function calculateEstimateAccuracy(sessions: WorkSession[]): EstimateAccu
     avgActualMinutes: Math.round(avgActual),
     avgDiffMinutes: Math.round(avgActual - avgEstimated),
   };
+}
+
+/** Below this many samples in a category, any "you underestimate X" claim is reading noise. */
+export const MIN_SESSIONS_FOR_CATEGORY_INSIGHT = 4;
+
+export interface CategoryAccuracy {
+  workType: WorkType;
+  label: string;
+  sessionCount: number;
+  /** Median actual÷estimated. >1 means this kind of work runs long for this student. */
+  medianRatio: number;
+  /** Signed percentage difference, rounded — e.g. +12 means "12% longer than estimated". */
+  percentDifference: number;
+}
+
+const WORK_TYPE_LABEL: Record<WorkType, string> = {
+  homework: "Homework",
+  reading: "Reading",
+  "study-session": "Study sessions",
+  "test-prep": "Test prep",
+  "quiz-prep": "Quiz prep",
+  project: "Projects",
+  essay: "Essays",
+  "long-term": "Long-term work",
+};
+
+/**
+ * Estimate accuracy broken down by kind of work (Phase 4.5C, Part 3), so a student can see *where*
+ * their estimating is off rather than only that it is. Categories below
+ * `MIN_SESSIONS_FOR_CATEGORY_INSIGHT` are omitted entirely — a confident-sounding claim from two
+ * sessions is worse than saying nothing.
+ *
+ * This reports the same median-ratio measure the planning personalization acts on (see
+ * `scheduling-engine/estimation.ts`), so what the student reads here matches what the scheduler does.
+ */
+export function calculateAccuracyByWorkType(
+  sessions: WorkSession[],
+  workItems: { id: string; workType: WorkType }[],
+  stages: { id: string; workItemId: string }[] = []
+): CategoryAccuracy[] {
+  const itemById = new Map(workItems.map((i) => [i.id, i]));
+  const stageById = new Map(stages.map((s) => [s.id, s]));
+  const byType = new Map<WorkType, number[]>();
+
+  for (const s of sessions) {
+    if (s.plannedMinutes == null || s.minutesSpent == null || s.plannedMinutes <= 0 || s.minutesSpent <= 0) continue;
+    const stage = stageById.get(s.workItemId);
+    const item = itemById.get(stage ? stage.workItemId : s.workItemId);
+    if (!item) continue;
+    if (!byType.has(item.workType)) byType.set(item.workType, []);
+    byType.get(item.workType)!.push(s.minutesSpent / s.plannedMinutes);
+  }
+
+  const results: CategoryAccuracy[] = [];
+  for (const [workType, ratios] of byType) {
+    if (ratios.length < MIN_SESSIONS_FOR_CATEGORY_INSIGHT) continue;
+    const sorted = [...ratios].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const medianRatio = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    results.push({
+      workType,
+      label: WORK_TYPE_LABEL[workType] ?? workType,
+      sessionCount: ratios.length,
+      medianRatio,
+      percentDifference: Math.round((medianRatio - 1) * 100),
+    });
+  }
+
+  // Largest divergence first — that's the one worth acting on.
+  return results.sort((a, b) => Math.abs(b.percentDifference) - Math.abs(a.percentDifference));
 }
 
 export interface TypicalWorkWindow {

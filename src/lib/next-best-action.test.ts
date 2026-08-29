@@ -33,6 +33,7 @@ function makeResult(overrides: Partial<GenerateScheduleResult> = {}): GenerateSc
     dailyForecast: [],
     decisionExplanations: {},
     deadlineCapacities: {},
+    estimateAdjustments: {},
     ...overrides,
   };
 }

@@ -19,6 +19,8 @@ export { calculateWorkloadStatus } from "./workload-status";
 export { explainScheduleDecision } from "./explanation";
 export { diffSchedules } from "./schedule-diff";
 export { calculateAvailableMinutesBeforeDeadline, calculateDeadlineCapacity } from "./deadline-capacity";
+export { buildEstimateHistory, personalizeEstimate } from "./estimation";
+export type { EstimateAdjustment, EstimateConfidence, EstimateHistory, EstimateMatchLevel } from "./estimation";
 export type { AvailableTimeOptions, DeadlineCapacity, DeadlineRiskLevel } from "./deadline-capacity";
 export {
   isDecomposable,
@@ -60,14 +62,33 @@ export type { TimeWindow } from "./availability";
 export type { DaySlot, PlannedChunk } from "./splitting";
 export type { DailyCapacityContext } from "./capacity";
 
+import {
+  ESTIMATE_CONFIDENCE_WEIGHT,
+  ESTIMATE_MAX_RATIO,
+  ESTIMATE_MIN_RATIO,
+  ESTIMATE_MIN_SAMPLES,
+  ESTIMATE_RECENT_WINDOW,
+} from "./constants";
 import type { EstimateAccuracySample } from "./types";
 
 /**
- * Roll estimate-vs-actual samples into an updated estimated-minutes figure for future similar
- * work items. Out of scope for Phase 2 (which only *records* estimate-vs-actual data — see
- * `WorkSession.plannedMinutes`/`minutesSpent` in `types/models.ts`); this stays a stub until a
- * later phase actually builds the learning heuristic.
+ * Rolls estimate-vs-actual samples into a refined estimate for similar future work (Phase 4.5C —
+ * previously a documented stub). Deliberately the same median/damp/clamp rule
+ * `personalizeEstimate` applies, just over a bare sample list rather than categorized history, so
+ * there is one definition of how history moves an estimate.
  */
-export function refineEstimate(_samples: EstimateAccuracySample[]): number {
-  throw new Error("refineEstimate: not implemented yet (future phase)");
+export function refineEstimate(baseMinutes: number, samples: EstimateAccuracySample[]): number {
+  const ratios = samples
+    .filter((s) => s.estimatedMinutes > 0 && s.actualMinutes > 0)
+    .slice(-ESTIMATE_RECENT_WINDOW)
+    .map((s) => s.actualMinutes / s.estimatedMinutes)
+    .sort((a, b) => a - b);
+
+  if (ratios.length < ESTIMATE_MIN_SAMPLES) return baseMinutes;
+
+  const mid = Math.floor(ratios.length / 2);
+  const median = ratios.length % 2 === 0 ? (ratios[mid - 1] + ratios[mid]) / 2 : ratios[mid];
+  const weight = ESTIMATE_CONFIDENCE_WEIGHT.limited;
+  const applied = Math.min(ESTIMATE_MAX_RATIO, Math.max(ESTIMATE_MIN_RATIO, 1 + (median - 1) * weight));
+  return Math.max(5, Math.round((baseMinutes * applied) / 5) * 5);
 }

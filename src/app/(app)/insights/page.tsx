@@ -6,6 +6,8 @@ import { ProgressBar } from "@/components/ui/ProgressBar";
 import { useAppData } from "@/lib/data/store";
 import {
   DAY_NAMES,
+  MIN_SESSIONS_FOR_CATEGORY_INSIGHT,
+  calculateAccuracyByWorkType,
   calculateAverageWeeklyWorkloadMinutes,
   calculateBusiestDayOfWeek,
   calculateEstimateAccuracy,
@@ -16,7 +18,7 @@ import {
 } from "@/lib/insights";
 
 export default function InsightsPage() {
-  const { workSessions, feedback } = useAppData();
+  const { workSessions, feedback, workItems, stages } = useAppData();
 
   if (workSessions.length === 0) {
     return (
@@ -39,6 +41,7 @@ export default function InsightsPage() {
   const busiestDay = calculateBusiestDayOfWeek(workSessions);
   const avgWeeklyMinutes = calculateAverageWeeklyWorkloadMinutes(workSessions);
   const feedbackTally = calculateFeedbackTally(feedback);
+  const categoryAccuracy = calculateAccuracyByWorkType(workSessions, workItems, stages);
 
   return (
     <div>
@@ -104,6 +107,44 @@ export default function InsightsPage() {
           )}
         </section>
       </div>
+
+      <section className="mt-6 rounded-lg border border-border bg-surface p-5">
+        <h2 className="mb-1 text-sm font-semibold text-ink">Estimating by type of work</h2>
+        <p className="mb-3 text-xs text-ink-faint">
+          Where your estimates tend to be off. StudyFlow uses this to adjust how long it plans for similar work.
+        </p>
+        {categoryAccuracy.length === 0 ? (
+          <p className="text-sm text-ink-muted">
+            Not enough information yet. This fills in once you&apos;ve completed at least{" "}
+            {MIN_SESSIONS_FOR_CATEGORY_INSIGHT} sessions of the same kind of work — until then any pattern here
+            would just be noise.
+          </p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-border">
+            {categoryAccuracy.map((c) => (
+              <li key={c.workType} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2">
+                <span className="text-sm text-ink">{c.label}</span>
+                <span className="flex items-center gap-3 text-xs text-ink-muted">
+                  <span>
+                    {c.percentDifference === 0 ? (
+                      <span className="font-medium text-success">usually close to your estimate</span>
+                    ) : (
+                      <>
+                        usually{" "}
+                        <span className={`font-medium ${c.percentDifference > 0 ? "text-warning" : "text-success"}`}>
+                          {Math.abs(c.percentDifference)}% {c.percentDifference > 0 ? "longer" : "shorter"}
+                        </span>{" "}
+                        than estimated
+                      </>
+                    )}
+                  </span>
+                  <span className="text-ink-faint">{c.sessionCount} sessions</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {feedbackTally && (
         <section className="mt-6 rounded-lg border border-border bg-surface p-5">

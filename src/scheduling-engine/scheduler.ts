@@ -24,6 +24,7 @@ import { findAvailableWindows, subtractIntervals, type TimeWindow } from "./avai
 import { calculatePriority, explainPriority } from "./priority";
 import { explainScheduleDecision } from "./explanation";
 import { nextEligibleStage } from "./decomposition";
+import { buildEstimateHistory, personalizeEstimate, type EstimateAdjustment } from "./estimation";
 import { isSplittableWorkType, sessionBounds, splitTask, type DaySlot, type PlannedChunk } from "./splitting";
 import {
   blockDurationMinutes,
@@ -103,10 +104,29 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     };
   }
 
+  // Phase 4.5C: the student's estimate is the *input* to planning, not the planning figure itself.
+  // Personalizing here — once, at the single point where schedulable units are resolved — is what
+  // makes the adjusted estimate flow identically into placement, priority, capacity, deadline
+  // buffer and the forecast. Doing it per-consumer would let those numbers disagree.
+  const estimateHistory = buildEstimateHistory(input.workSessions ?? [], input.workItems, input.stages ?? []);
+  const estimateAdjustments: Record<string, EstimateAdjustment> = {};
+  const stageParentId = new Map((input.stages ?? []).map((s) => [s.id, s.workItemId]));
+
+  function planWith(unit: SchedulableWorkItem): SchedulableWorkItem {
+    const adjustment = personalizeEstimate(unit, estimateHistory);
+    estimateAdjustments[unit.id] = adjustment;
+    // Mirror onto the parent id for decomposed work, matching how `priorities` and
+    // `deadlineCapacities` are keyed, so UI keyed by the work item resolves too.
+    const parentId = stageParentId.get(unit.id);
+    if (parentId) estimateAdjustments[parentId] = { ...adjustment, workItemId: parentId };
+    return adjustment.adjusted ? { ...unit, estimatedMinutes: adjustment.planningMinutes } : unit;
+  }
+
   const inRange = notCompleted
     .filter((item) => toDateOnly(item.dueDate) <= rangeEnd || diffInDays(now, item.dueDate) <= 0)
     .map(unitFor)
-    .filter((unit): unit is SchedulableWorkItem => unit !== null);
+    .filter((unit): unit is SchedulableWorkItem => unit !== null)
+    .map(planWith);
   const outOfRangeSoon = notCompleted.filter(
     (item) =>
       toDateOnly(item.dueDate) > rangeEnd &&
@@ -153,11 +173,14 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
   // off whatever id ended up on the block, also resolve).
   const priorities: Record<string, PriorityBreakdown> = {};
   for (const item of notCompleted) {
-    const unit = unitFor(item);
-    if (!unit) {
+    const resolved = unitFor(item);
+    if (!resolved) {
       priorities[item.id] = calculatePriority(item, { now, remainingMinutes: 0 });
       continue;
     }
+    // Same personalized figure the placement pass uses — priority's workload factor must not be
+    // scored against a different estimate than the one actually being scheduled.
+    const unit = planWith(resolved);
     const breakdown = calculatePriority(unit, { now, remainingMinutes: remainingOf(unit) });
     priorities[item.id] = { ...breakdown, workItemId: item.id };
     if (unit.id !== item.id) priorities[unit.id] = breakdown;
@@ -407,6 +430,7 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     dailyForecast,
     decisionExplanations,
     deadlineCapacities,
+    estimateAdjustments,
   };
 }
 

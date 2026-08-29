@@ -1,6 +1,6 @@
 "use client";
 
-import { formatMinutesAsHoursMinutes } from "@/scheduling-engine";
+import { formatMinutesAsHoursMinutes, type EstimateAdjustment } from "@/scheduling-engine";
 import type { BufferSummary, StartRecommendation } from "@/lib/decision-support";
 
 const TONE: Record<BufferSummary["label"], string> = {
@@ -18,12 +18,16 @@ const TONE: Record<BufferSummary["label"], string> = {
 export function DeadlineInsight({
   buffer,
   startRecommendation,
+  estimate,
 }: {
   buffer: BufferSummary | null;
   startRecommendation: StartRecommendation | null;
+  /** Only rendered when StudyFlow actually changed the planning estimate (Phase 4.5C, Part 7/8). */
+  estimate?: EstimateAdjustment | null;
 }) {
-  if (!buffer && !startRecommendation) return null;
-  if (buffer && buffer.capacity.estimatedMinutes <= 0 && !startRecommendation) return null;
+  const showEstimate = !!estimate?.adjusted;
+  if (!buffer && !startRecommendation && !showEstimate) return null;
+  if (buffer && buffer.capacity.estimatedMinutes <= 0 && !startRecommendation && !showEstimate) return null;
 
   return (
     <div className="mt-2 rounded-md border border-border-strong bg-paper px-3 py-2">
@@ -43,6 +47,26 @@ export function DeadlineInsight({
             </span>
           </p>
         </>
+      )}
+
+      {showEstimate && estimate && (
+        <p className={buffer && buffer.capacity.estimatedMinutes > 0 ? "mt-2 text-xs" : "text-xs"}>
+          <span className="font-medium text-ink">
+            Planning for {formatMinutesAsHoursMinutes(estimate.planningMinutes)}, not your{" "}
+            {formatMinutesAsHoursMinutes(estimate.studentMinutes)} estimate.
+          </span>{" "}
+          <span className="text-ink-muted">
+            {estimate.reason}
+            {/* Only worth showing when the student's history actually has spread — an identical
+                low and high would read as false precision dressed up as a range. */}
+            {estimate.rangeLowMinutes !== estimate.rangeHighMinutes && (
+              <>
+                {" "}Similar work has usually taken you {formatMinutesAsHoursMinutes(estimate.rangeLowMinutes)}–
+                {formatMinutesAsHoursMinutes(estimate.rangeHighMinutes)}.
+              </>
+            )}
+          </span>
+        </p>
       )}
 
       {startRecommendation && (

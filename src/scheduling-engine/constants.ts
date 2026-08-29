@@ -188,6 +188,33 @@ export const FEEDBACK_ADJUSTMENT_DECREASE = 0.85;
 export const FEEDBACK_ADJUSTMENT_INCREASE = 1.15;
 
 /**
+ * Personalized time estimation (Phase 4.5C). Deterministic and statistical — no ML, no learning
+ * rate, no model. The whole mechanism is: take the median estimate-vs-actual ratio from the
+ * student's recent similar sessions, damp it by how much history actually backs it, clamp it, and
+ * multiply their own estimate by the result.
+ *
+ * Every number here exists to stop the adjustment from being confidently wrong:
+ *  - `MIN_SAMPLES` — below this, no adjustment at all. Two long sessions is an anecdote.
+ *  - `RECENT_WINDOW` — only the most recent N samples count, so a student who gets better at
+ *    estimating isn't judged forever on how they started (Scenario I).
+ *  - median, not mean — one 3-hour night can't drag the ratio on its own (Scenario H).
+ *  - `MIN/MAX_RATIO` — a hard ceiling and floor on how far the schedule can be moved.
+ *  - the confidence weights — a 3-sample history moves the estimate half as far as a 20-sample one.
+ */
+export const ESTIMATE_MIN_SAMPLES = 3;
+export const ESTIMATE_RECENT_WINDOW = 12;
+/** Never plan less than 80% or more than 150% of what the student said. */
+export const ESTIMATE_MIN_RATIO = 0.8;
+export const ESTIMATE_MAX_RATIO = 1.5;
+/** Sample counts at which history is treated as "good" and "strong". */
+export const ESTIMATE_GOOD_SAMPLES = 8;
+export const ESTIMATE_STRONG_SAMPLES = 20;
+/** How much of the observed ratio is actually applied, by confidence level. */
+export const ESTIMATE_CONFIDENCE_WEIGHT = { limited: 0.5, good: 0.8, strong: 1 } as const;
+/** Below this much difference, the adjustment isn't worth making or mentioning. */
+export const ESTIMATE_MIN_MEANINGFUL_SHIFT = 0.05;
+
+/**
  * Task decomposition (Phase 4). Only these work types are ever considered for automatic
  * decomposition — routine homework/reading/study-session never qualify regardless of duration,
  * per the spec's "the system should be conservative" instruction. Thresholds are chosen so the

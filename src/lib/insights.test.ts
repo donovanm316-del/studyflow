@@ -6,6 +6,8 @@ import {
   calculateFeedbackTally,
   calculatePostponementRate,
   calculateTypicalWorkWindow,
+  calculateAccuracyByWorkType,
+  MIN_SESSIONS_FOR_CATEGORY_INSIGHT,
   MIN_SESSIONS_FOR_HABIT_INSIGHT,
 } from "./insights";
 import type { ScheduleFeedback, WorkSession } from "@/types/models";
@@ -58,6 +60,62 @@ describe("calculateEstimateAccuracy", () => {
   it("ignores sessions without both an estimate and an actual", () => {
     const sessions = [makeSession({ plannedMinutes: 30, minutesSpent: 40 }), makeSession({ postponed: true, minutesSpent: undefined })];
     expect(calculateEstimateAccuracy(sessions)!.sessionCount).toBe(1);
+  });
+});
+
+describe("calculateAccuracyByWorkType (Phase 4.5C)", () => {
+  const homework = { id: "hw", workType: "homework" as const };
+  const reading = { id: "rd", workType: "reading" as const };
+
+  it("stays silent for categories below the minimum sample size", () => {
+    const sessions = Array.from({ length: MIN_SESSIONS_FOR_CATEGORY_INSIGHT - 1 }, () =>
+      makeSession({ workItemId: "hw", plannedMinutes: 40, minutesSpent: 60 })
+    );
+    expect(calculateAccuracyByWorkType(sessions, [homework])).toEqual([]);
+  });
+
+  it("reports a category once there's enough real data", () => {
+    const sessions = Array.from({ length: 5 }, () =>
+      makeSession({ workItemId: "hw", plannedMinutes: 40, minutesSpent: 48 })
+    );
+    const [result] = calculateAccuracyByWorkType(sessions, [homework]);
+
+    expect(result.workType).toBe("homework");
+    expect(result.sessionCount).toBe(5);
+    expect(result.percentDifference).toBe(20);
+  });
+
+  it("reports finishing early as a negative difference", () => {
+    const sessions = Array.from({ length: 5 }, () =>
+      makeSession({ workItemId: "rd", plannedMinutes: 40, minutesSpent: 30 })
+    );
+    expect(calculateAccuracyByWorkType(sessions, [reading])[0].percentDifference).toBe(-25);
+  });
+
+  it("orders categories by how far off they are, worst first", () => {
+    const sessions = [
+      ...Array.from({ length: 5 }, () => makeSession({ workItemId: "hw", plannedMinutes: 40, minutesSpent: 42 })),
+      ...Array.from({ length: 5 }, () => makeSession({ workItemId: "rd", plannedMinutes: 40, minutesSpent: 64 })),
+    ];
+    const results = calculateAccuracyByWorkType(sessions, [homework, reading]);
+    expect(results[0].workType).toBe("reading");
+  });
+
+  it("uses the median, so one outlier doesn't define a category", () => {
+    const sessions = [
+      ...Array.from({ length: 5 }, () => makeSession({ workItemId: "hw", plannedMinutes: 40, minutesSpent: 40 })),
+      makeSession({ workItemId: "hw", plannedMinutes: 40, minutesSpent: 600 }),
+    ];
+    expect(calculateAccuracyByWorkType(sessions, [homework])[0].percentDifference).toBe(0);
+  });
+
+  it("attributes a decomposed item's stage sessions to the parent's work type", () => {
+    const project = { id: "p1", workType: "project" as const };
+    const stages = [{ id: "st1", workItemId: "p1" }];
+    const sessions = Array.from({ length: 5 }, () =>
+      makeSession({ workItemId: "st1", plannedMinutes: 40, minutesSpent: 50 })
+    );
+    expect(calculateAccuracyByWorkType(sessions, [project], stages)[0].workType).toBe("project");
   });
 });
 

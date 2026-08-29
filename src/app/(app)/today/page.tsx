@@ -73,8 +73,9 @@ export default function TodayPage() {
   const [chooserBlockId, setChooserBlockId] = useState<string | null>(null);
   /** Engine-computed consequences of each option, held only while the chooser is open. */
   const [previews, setPreviews] = useState<{ move: MovePreview; replan: MovePreview } | null>(null);
-  /** Title of the session just finished, so "✓ done — next up: …" can be shown (Part 14). */
-  const [justCompleted, setJustCompleted] = useState<string | null>(null);
+  /** The session just finished, so "✓ done — next up: …" and estimate-vs-actual can be shown
+   *  without the student navigating away (Phase 4, Part 14; Phase 4.5C, Part 1). */
+  const [justCompleted, setJustCompleted] = useState<{ title: string; actual: number; planned: number | null } | null>(null);
   const [replanNotice, setReplanNotice] = useState<string | null>(null);
   const [expandedWhyId, setExpandedWhyId] = useState<string | null>(null);
   // Captures the schedule right before a replanning action; once the store update lands and
@@ -179,6 +180,10 @@ export default function TodayPage() {
     if (!completion) return;
     const finishedTitle =
       completion.source.kind === "block" ? completion.source.block.title : activeSession?.workItemTitle ?? "that session";
+    const plannedForSession =
+      completion.source.kind === "block"
+        ? plannedMinutes(completion.source.block)
+        : activeSession?.plannedMinutes ?? null;
     if (completion.source.kind === "block") {
       completeBlock(completion.source.block, completion.minutes, estimateFeedback);
     } else {
@@ -187,7 +192,7 @@ export default function TodayPage() {
     setCompletion(null);
     // Surface what's next immediately rather than making the student go looking (Part 14). The
     // actual recommendation is read from the recomputed schedule on the next render, below.
-    setJustCompleted(finishedTitle);
+    setJustCompleted({ title: finishedTitle, actual: completion.minutes, planned: plannedForSession });
   }
 
   const workAhead = result.workAheadSuggestions.filter((s) => s.type === "work-ahead");
@@ -274,18 +279,28 @@ export default function TodayPage() {
       )}
 
       {justCompleted && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-success-soft bg-success-soft px-4 py-3 text-sm text-success">
-          <span>
-            <span aria-hidden>✓</span> &ldquo;{justCompleted}&rdquo; complete.{" "}
-            {nextAction.kind === "scheduled" ? (
-              <>
-                Next up: <span className="font-medium">{nextAction.block.title}</span> — {nextAction.minutesLabel}
-                {nextAction.dueLabel && <> · {nextAction.dueLabel}</>}
-              </>
-            ) : nextAction.kind === "no-work" ? (
-              <>{nextAction.message}</>
-            ) : null}
-          </span>
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-2 rounded-md border border-success-soft bg-success-soft px-4 py-3 text-sm text-success">
+          <div>
+            <p>
+              <span aria-hidden>✓</span> &ldquo;{justCompleted.title}&rdquo; complete.
+            </p>
+            {justCompleted.planned != null && justCompleted.planned !== justCompleted.actual && (
+              <p className="mt-0.5 text-xs">
+                You took {justCompleted.actual} minutes against a {justCompleted.planned}-minute plan — recorded, and
+                it will inform future estimates for similar work.
+              </p>
+            )}
+            <p className="mt-0.5">
+              {nextAction.kind === "scheduled" ? (
+                <>
+                  Next up: <span className="font-medium">{nextAction.block.title}</span> — {nextAction.minutesLabel}
+                  {nextAction.dueLabel && <> · {nextAction.dueLabel}</>}
+                </>
+              ) : nextAction.kind === "no-work" ? (
+                <>{nextAction.message}</>
+              ) : null}
+            </p>
+          </div>
           <button onClick={() => setJustCompleted(null)} aria-label="Dismiss" className="text-success hover:opacity-70">
             ✕
           </button>

@@ -13,9 +13,11 @@ import type {
   ScheduleBlock,
   ScheduleFeedback,
   Test,
+  WorkSession,
   WorkStage,
 } from "@/types/models";
 import type { DeadlineCapacity } from "./deadline-capacity";
+import type { EstimateAdjustment } from "./estimation";
 
 /** Anything the engine can schedule time for. */
 export type SchedulableWorkItem = Assignment | Test | Quiz | Project;
@@ -49,6 +51,13 @@ export interface GenerateScheduleInput {
    * item as a whole and never more than one stage at a time.
    */
   stages?: WorkStage[];
+  /**
+   * Recorded session history, used to personalize each item's planning estimate (Phase 4.5C).
+   * Passed into the engine rather than applied by callers so that placement, deadline capacity,
+   * workload status and the forecast all use one planning figure — see `estimateAdjustments`.
+   * Omitting it simply means every item plans at the student's own estimate.
+   */
+  workSessions?: WorkSession[];
 }
 
 /** One factor breakdown behind a single work item's priority score (Part 3 / Part 15). */
@@ -115,6 +124,12 @@ export interface GenerateScheduleResult {
    * item. Computed from real availability, not `deadline - now`.
    */
   deadlineCapacities: Record<string, DeadlineCapacity>;
+  /**
+   * Per work item: the student's own estimate, the estimate the engine actually planned with, and
+   * why they differ (Phase 4.5C). Present for every scheduled item — `adjusted: false` when the
+   * student's number was used unchanged, which is the case until real history accumulates.
+   */
+  estimateAdjustments: Record<string, EstimateAdjustment>;
 }
 
 /** Input for recomputing a plan after something changes (missed session, new item, moved due date). */

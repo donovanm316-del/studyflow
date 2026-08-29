@@ -34,10 +34,31 @@ engine:
 | `schedule-diff.ts` | `diffSchedules` — compares two `ScheduleBlock[]` snapshots and reports only the work items whose footprint actually changed (Phase 3B) |
 | `decomposition.ts` | `suggestStages`, `nextEligibleStage`, `isStageEligible`, `stageProgress`, `renumberStages` — turns a large project/essay/test-prep item into an ordered `WorkStage[]` and answers which single stage, if any, is eligible to be scheduled right now (Phase 4) |
 | `deadline-capacity.ts` | `calculateAvailableMinutesBeforeDeadline`, `calculateDeadlineCapacity` — how much *usable* work time genuinely remains before an exact deadline, and whether the remaining work still fits (Phase 4.5A) |
+| `estimation.ts` | `buildEstimateHistory`, `personalizeEstimate` — "how long does THIS student usually need for THIS kind of work?", from their own recorded sessions (Phase 4.5C) |
 | `scheduler.ts` | `generateSchedule`, `scheduleTask`, `detectOverload`, `replanRemainingSchedule` — orchestrates everything above |
 | `index.ts` | The only module the UI should import from |
 
-## Current status (Phase 2 + 2.5 + 3A + 3B + 4 + 4.5A + 4.5B)
+## Current status (Phase 2 + 2.5 + 3A + 3B + 4 + 4.5A + 4.5B + 4.5C)
+
+**Phase 4.5C — personalized estimates.** `estimation.ts` implements what `refineEstimate` had been
+a documented stub for since Phase 2. It is statistical, not learned: take the median
+actual÷estimated ratio from the student's most recent similar sessions, damp it by how much history
+backs it, clamp it to [0.8, 1.5], and multiply their own estimate by the result. Median resists a
+single brutal night; the recency window lets a student who improves stop being judged on how they
+started; the damping means three samples move the schedule half as far as twenty.
+
+Similarity falls back outward — work type + rigor + subject → type + rigor → type → overall — taking
+the most specific category that clears the minimum sample count, so a confident number is never
+produced from one or two sessions. Sessions whose work item was since deleted still count toward
+overall accuracy, since the estimate/actual pair is real; they just can't be categorized.
+
+Personalization is applied at the single point where schedulable units are resolved, so one planning
+figure flows into placement, priority, deadline capacity, buffer and the forecast — they cannot
+disagree. The student's own estimate is never overwritten: `estimateAdjustments` carries both
+numbers, and the UI shows the student's alongside what the engine planned with, plus why. Note that
+the *reason text reports the observed median* while the *planner applies the damped ratio* — that
+gap is deliberate (the planner is conservative), and stating the damped figure as if it were the
+student's record would be a false claim, so the two are kept distinct on purpose.
 
 **Phase 4.5B — decision support (lives in `src/lib/decision-support.ts`, not here).** Everything
 that answers "what should I do now / what if I don't / what fits in 30 minutes / is my week
@@ -139,7 +160,7 @@ auto-scheduled); overload detection with a human-readable warning and a list of 
 (flexible/target) work; deterministic block ids (derived from inputs, not a counter or
 `Math.random`).
 
-Deliberately still a stub: `refineEstimate` (estimate-learning from historical accuracy) — the
+Previously-stubbed work now implemented: `refineEstimate` (Phase 4.5C) — see `estimation.ts`.
 engine only *records* the estimate-vs-actual data (`WorkSession.plannedMinutes`/`minutesSpent`)
 that a future phase would need; it does not yet learn from it. No AI/LLM API is used or planned
 for this module — see Part 24 of the Phase 2 spec.
