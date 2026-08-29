@@ -21,6 +21,7 @@ import type {
 import {
   calculateBreakPreferenceAdjustment,
   calculateFreeTimePriorityAdjustment,
+  normalizeDeadline,
   renumberStages,
   type SchedulableWorkItem,
 } from "@/scheduling-engine";
@@ -178,6 +179,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       // Pre-Phase-4 saves have no `stages` array at all — every existing work item simply behaves
       // as a single-stage item until the student chooses to decompose it (Phase 4, Part 37).
       next.stages = next.stages ?? [];
+      // Pre-Phase-4.5A saves may hold a bare "YYYY-MM-DD" deadline. Normalize once on load so the
+      // rest of the app only ever sees full timestamps — a date with no time means the end of that
+      // day, 11:59 PM (Phase 4.5A, Part 2). Nothing is dropped or rewritten beyond adding the
+      // implied time, so an existing student never has to re-enter an assignment.
+      next.workItems = (next.workItems ?? []).map((item) => ({ ...item, dueDate: normalizeDeadline(item.dueDate) }));
     } else {
       next = {
         workItems: [],

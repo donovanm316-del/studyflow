@@ -25,7 +25,18 @@ import { calculatePriority, explainPriority } from "./priority";
 import { explainScheduleDecision } from "./explanation";
 import { nextEligibleStage } from "./decomposition";
 import { isSplittableWorkType, sessionBounds, splitTask, type DaySlot, type PlannedChunk } from "./splitting";
-import { blockDurationMinutes, combineDateAndMinutes, dateRange, diffInDays, toDateOnly } from "./date-utils";
+import {
+  blockDurationMinutes,
+  combineDateAndMinutes,
+  dateRange,
+  DEFAULT_DEADLINE_TIME,
+  diffInDays,
+  formatMinutesAsHoursMinutes,
+  minutesOfDay,
+  normalizeDeadline,
+  toDateOnly,
+} from "./date-utils";
+import { calculateDeadlineCapacity, type DeadlineCapacity } from "./deadline-capacity";
 import { calculateWorkloadStatus } from "./workload-status";
 import type {
   DailyForecastEntry,
@@ -186,8 +197,9 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
   const startDate = rangeStart > today ? rangeStart : today;
 
   for (const { item, remainingMinutes } of schedulable) {
-    const dueDateOnly = toDateOnly(item.dueDate);
-    const isOverdueItem = diffInDays(now, item.dueDate) <= 0;
+    const deadlineIso = normalizeDeadline(item.dueDate);
+    const dueDateOnly = toDateOnly(deadlineIso);
+    const isOverdueItem = diffInDays(now, deadlineIso) <= 0;
     // Overdue work, or work due before the range even starts, gets the whole range to catch up.
     // Otherwise the item is schedulable up to whichever comes first: its due date or the range end.
     const endDate = isOverdueItem || dueDateOnly < startDate ? rangeEnd : dueDateOnly < rangeEnd ? dueDateOnly : rangeEnd;
@@ -201,16 +213,30 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
         : startDate;
 
     let orderedDates = dateRange(effectiveStart, endDate);
-    // A test/quiz is prep work for something that happens ON the due date — the due date itself
-    // isn't a day left to study, so it's excluded from the schedulable window (Part 11). Guarded
-    // so it never empties the window entirely when the due date is the only day available.
-    if ((item.kind === "test" || item.kind === "quiz") && orderedDates.length > 1) {
+    // A test/quiz is prep work for something that happens ON the due date. When no exam *time* was
+    // given, the deadline defaults to end-of-day (23:59) — that's an absence of information, not a
+    // claim the exam is at midnight, so the Phase 3A behavior stands and the whole exam day is
+    // excluded rather than optimistically assuming a full day of cramming is available before it.
+    //
+    // When the student did specify a time (Phase 4.5A, Part 10), that's real information: prep
+    // before a 3:00 PM exam that morning is legitimate, and prep before an 8:00 AM one barely
+    // exists. `deadlineCap` below enforces the actual cutoff precisely, so excluding the whole day
+    // as well would just discard usable time the student really has.
+    const examTimeUnspecified = deadlineIso.endsWith(`T${DEFAULT_DEADLINE_TIME}`);
+    if ((item.kind === "test" || item.kind === "quiz") && examTimeUnspecified && orderedDates.length > 1) {
       orderedDates = orderedDates.filter((d) => d !== dueDateOnly);
     }
     if (planningProfile.workStyle === "deadline_driven") orderedDates.reverse();
 
+    // Work must finish *before the deadline instant*, not merely somewhere on the deadline's
+    // calendar day (Phase 4.5A, Part 5/10). For a test at 9:00 AM this leaves only the morning
+    // window that day; for one at 3:00 PM it leaves considerably more. An overdue item has no
+    // future cap to apply — it's already past, and gets the whole range to catch up.
+    const deadlineCap = isOverdueItem ? undefined : { date: dueDateOnly, minute: minutesOfDay(deadlineIso.split("T")[1]) };
+
     const leftover = scheduleTask(item, remainingMinutes, {
       orderedDates,
+      deadlineCap,
       dayState,
       bounds,
       breakPreference: planningProfile.breakPreference,
@@ -261,7 +287,6 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
   const commitmentBlocks = materializeCommitmentBlocks(userId, dates, commitments);
 
   const hardDeadlineWarnings = hardDeadlineWarning(schedulable, unscheduledWorkItemIds);
-  const warnings: ScheduleWarning[] = [...detectOverload(schedulable, totalAvailableMinutes), ...hardDeadlineWarnings];
 
   const caughtUp = !isBehind && unscheduledWorkItemIds.length === 0;
   const workAheadSuggestions = caughtUp ? buildWorkAheadSuggestions(outOfRangeSoon, now) : [];
@@ -289,6 +314,59 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     if (!block.workItemId) continue;
     newSessionCountByItem.set(block.workItemId, (newSessionCountByItem.get(block.workItemId) ?? 0) + 1);
   }
+  // How much usable time genuinely remains before each item's exact deadline (Phase 4.5A, Part
+  // 7/8). Measured against `existingBlocks` rather than the blocks just placed: this answers "is
+  // there room for this work?", so counting the sessions the engine reserved *for that very work*
+  // as unavailable would make every scheduled item look like it had no time left.
+  const deadlineCapacities: Record<string, DeadlineCapacity> = {};
+  for (const { item, remainingMinutes } of schedulable) {
+    const capacity = calculateDeadlineCapacity(
+      item.id,
+      item.dueDate,
+      remainingMinutes,
+      now,
+      planningProfile,
+      commitments,
+      existingBlocks,
+      { dailyCapacityMinutes, preferredStartDate: item.preferredStartDate }
+    );
+    deadlineCapacities[item.id] = capacity;
+    // Mirror onto the parent item's id for a decomposed item, so UI keyed by the work item (not
+    // the active stage) resolves too — same convention `priorities` uses.
+    const parentId = stagesByItem.size > 0 ? (input.stages ?? []).find((s) => s.id === item.id)?.workItemId : undefined;
+    if (parentId) deadlineCapacities[parentId] = { ...capacity, workItemId: parentId };
+  }
+
+  // An item whose remaining work no longer fits in the usable time left before its deadline is
+  // reported outright, rather than being quietly left to look fine because its calendar date is
+  // still in the future. Limited to hard/important deadlines so overdue flexible work can't bury
+  // the schedule in warnings — the existing strictness hierarchy still governs (Part 9).
+  const atRiskItems = schedulable.filter(
+    ({ item }) =>
+      (item.deadlineStrictness === "hard" || item.deadlineStrictness === "important") &&
+      deadlineCapacities[item.id]?.risk === "at-risk"
+  );
+  const deadlineRiskWarnings: ScheduleWarning[] = atRiskItems.length
+    ? [
+        {
+          kind: "deadline-at-risk",
+          message: `${atRiskItems.length === 1 ? "One item has" : `${atRiskItems.length} items have`} less usable time left than the work still needs: ${atRiskItems
+            .map(({ item }) => {
+              const cap = deadlineCapacities[item.id];
+              return `${item.title} (about ${formatMinutesAsHoursMinutes(cap.availableMinutes)} available, ${formatMinutesAsHoursMinutes(cap.estimatedMinutes)} of work left)`;
+            })
+            .join("; ")}.`,
+          workItemIds: atRiskItems.map(({ item }) => item.id),
+        },
+      ]
+    : [];
+
+  const warnings: ScheduleWarning[] = [
+    ...detectOverload(schedulable, totalAvailableMinutes),
+    ...hardDeadlineWarnings,
+    ...deadlineRiskWarnings,
+  ];
+
   const decisionExplanations: Record<string, ScheduleDecisionExplanation> = {};
   for (const { item, remainingMinutes } of schedulable) {
     const sessionCount = newSessionCountByItem.get(item.id);
@@ -297,6 +375,8 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
       remainingMinutes,
       sessionCount,
       isBehind,
+      now,
+      deadlineCapacity: deadlineCapacities[item.id],
     });
   }
 
@@ -311,11 +391,14 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     workloadStatus,
     dailyForecast,
     decisionExplanations,
+    deadlineCapacities,
   };
 }
 
 interface ScheduleTaskContext {
   orderedDates: string[];
+  /** Clips this item's usable time on its deadline date so no session runs past the deadline itself. */
+  deadlineCap?: { date: string; minute: number };
   dayState: Map<string, DayState>;
   bounds: { min: number; max: number };
   breakPreference: import("@/types/models").BreakPreference;
@@ -333,18 +416,36 @@ export function scheduleTask(
 ): number {
   const { orderedDates, dayState, bounds } = context;
 
+  // Truncates a window at the deadline instant on the deadline's own date; returns null for a
+  // window that lies entirely after it (or is left too short to hold a real session).
+  const clipToDeadline = (date: string, window: TimeWindow): TimeWindow | null => {
+    if (!context.deadlineCap || date !== context.deadlineCap.date) return window;
+    const endMinute = Math.min(window.endMinute, context.deadlineCap.minute);
+    if (endMinute - window.startMinute < MIN_CHUNK_MINUTES) return null;
+    return { startMinute: window.startMinute, endMinute };
+  };
+
   const slots: DaySlot[] = [];
   for (const date of orderedDates) {
     const state = dayState.get(date);
     if (!state) continue;
     for (const window of state.windows) {
-      slots.push({ date, window, capacityRemaining: state.capacityRemaining });
+      const usable = clipToDeadline(date, window);
+      if (!usable) continue;
+      slots.push({ date, window: usable, capacityRemaining: state.capacityRemaining });
     }
   }
 
   const roomyDays = orderedDates.filter((date) => {
     const state = dayState.get(date);
-    return state && state.capacityRemaining >= MIN_CHUNK_MINUTES && state.windows.some((w) => w.endMinute - w.startMinute >= MIN_CHUNK_MINUTES);
+    return (
+      state &&
+      state.capacityRemaining >= MIN_CHUNK_MINUTES &&
+      state.windows.some((w) => {
+        const usable = clipToDeadline(date, w);
+        return usable && usable.endMinute - usable.startMinute >= MIN_CHUNK_MINUTES;
+      })
+    );
   });
 
   let perSlotTargetMinutes: number | undefined;

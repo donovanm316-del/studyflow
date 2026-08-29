@@ -18,6 +18,8 @@ export { splitTask, sessionBounds, isSplittableWorkType } from "./splitting";
 export { calculateWorkloadStatus } from "./workload-status";
 export { explainScheduleDecision } from "./explanation";
 export { diffSchedules } from "./schedule-diff";
+export { calculateAvailableMinutesBeforeDeadline, calculateDeadlineCapacity } from "./deadline-capacity";
+export type { AvailableTimeOptions, DeadlineCapacity, DeadlineRiskLevel } from "./deadline-capacity";
 export {
   isDecomposable,
   suggestStages,
@@ -28,7 +30,16 @@ export {
   renumberStages,
 } from "./decomposition";
 export type { StageProgress } from "./decomposition";
-export { minutesOfDay, formatMinutesAsHoursMinutes, blockDurationMinutes, toDateOnly } from "./date-utils";
+export {
+  minutesOfDay,
+  formatMinutesAsHoursMinutes,
+  blockDurationMinutes,
+  toDateOnly,
+  normalizeDeadline,
+  minutesUntil,
+  hoursUntil,
+  DEFAULT_DEADLINE_TIME,
+} from "./date-utils";
 
 export type {
   DailyForecastEntry,

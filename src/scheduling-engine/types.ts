@@ -15,6 +15,7 @@ import type {
   Test,
   WorkStage,
 } from "@/types/models";
+import type { DeadlineCapacity } from "./deadline-capacity";
 
 /** Anything the engine can schedule time for. */
 export type SchedulableWorkItem = Assignment | Test | Quiz | Project;
@@ -65,7 +66,13 @@ export interface PriorityBreakdown {
 }
 
 export interface ScheduleWarning {
-  kind: "overloaded-range" | "unscheduled-hard-deadline";
+  /**
+   * `deadline-at-risk` (Phase 4.5A, Part 8/13) is distinct from `unscheduled-hard-deadline`: that
+   * one reports what this *placement pass* couldn't fit, while this reports that there genuinely
+   * isn't enough usable time left before the deadline at all — which stays true no matter how the
+   * work is rearranged, and is what makes a risky manual move visible instead of silent.
+   */
+  kind: "overloaded-range" | "unscheduled-hard-deadline" | "deadline-at-risk";
   message: string;
   workItemIds: string[];
 }
@@ -101,6 +108,13 @@ export interface GenerateScheduleResult {
   dailyForecast: DailyForecastEntry[];
   /** A "why was this scheduled" breakdown per work item that has at least one block placed (Phase 3B, Part 4/5). */
   decisionExplanations: Record<string, ScheduleDecisionExplanation>;
+  /**
+   * Per work item: how much usable work time genuinely remains before its exact deadline, and
+   * whether the remaining work still fits (Phase 4.5A, Part 7/8). Keyed by the same id used in
+   * `priorities` — the parent item's id, and additionally the active stage's id for a decomposed
+   * item. Computed from real availability, not `deadline - now`.
+   */
+  deadlineCapacities: Record<string, DeadlineCapacity>;
 }
 
 /** Input for recomputing a plan after something changes (missed session, new item, moved due date). */

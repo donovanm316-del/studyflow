@@ -68,6 +68,48 @@ describe("calculatePriority", () => {
   });
 });
 
+describe("calculateUrgency — time awareness (Phase 4.5A)", () => {
+  const SUNDAY_6PM = "2026-08-23T18:00";
+
+  it("treats due-tonight as meaningfully more urgent than due-tomorrow-night", () => {
+    // The spec's worked example: ~6 hours left vs ~30 hours left must not read as equally urgent.
+    const tonight = calculateUrgency("2026-08-23T23:59", SUNDAY_6PM);
+    const tomorrow = calculateUrgency("2026-08-24T23:59", SUNDAY_6PM);
+
+    expect(tonight).toBeGreaterThan(tomorrow);
+    // A real separation, not a rounding difference — the old linear curve gave only ~0.10 here.
+    expect(tonight - tomorrow).toBeGreaterThan(0.2);
+  });
+
+  it("distinguishes different times on the same calendar day", () => {
+    const morning = calculateUrgency("2026-08-24T09:00", SUNDAY_6PM);
+    const evening = calculateUrgency("2026-08-24T21:00", SUNDAY_6PM);
+    expect(morning).toBeGreaterThan(evening);
+  });
+
+  it("returns maximum urgency for an already-passed deadline", () => {
+    expect(calculateUrgency("2026-08-23T17:00", SUNDAY_6PM)).toBe(1);
+  });
+
+  it("treats a deadline later today as overdue only once its time has actually passed", () => {
+    expect(isOverdue("2026-08-23T23:59", SUNDAY_6PM)).toBe(false);
+    expect(isOverdue("2026-08-23T17:59", SUNDAY_6PM)).toBe(true);
+  });
+
+  it("decays monotonically as the deadline moves further out", () => {
+    const points = ["2026-08-23T23:59", "2026-08-24T23:59", "2026-08-26T23:59", "2026-09-02T23:59"].map((d) =>
+      calculateUrgency(d, SUNDAY_6PM)
+    );
+    for (let i = 1; i < points.length; i++) {
+      expect(points[i]).toBeLessThan(points[i - 1]);
+    }
+  });
+
+  it("reads a legacy date-only deadline as end-of-day, not midnight", () => {
+    expect(calculateUrgency("2026-08-24", SUNDAY_6PM)).toBe(calculateUrgency("2026-08-24T23:59", SUNDAY_6PM));
+  });
+});
+
 describe("explainPriority", () => {
   it("explains the score using the item's actual weight, strictness, and estimate", () => {
     const item = makeTest({ title: "Biology Test", weight: "high", deadlineStrictness: "hard", estimatedMinutes: 150 });

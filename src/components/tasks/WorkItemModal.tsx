@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { DEFAULT_DEADLINE_TIME, normalizeDeadline } from "@/scheduling-engine";
 import type { NewWorkItemInput } from "@/lib/data/store";
 import type { SchedulableWorkItem } from "@/scheduling-engine";
 import type { AssignmentWeight, CourseRigor, DeadlineStrictness, WorkType } from "@/types/models";
@@ -38,7 +39,11 @@ const WORK_TYPE_OPTIONS_BY_KIND: Record<string, { value: WorkType; label: string
 };
 
 function toDateInputValue(dueDateIso: string): string {
-  return dueDateIso.slice(0, 10);
+  return normalizeDeadline(dueDateIso).slice(0, 10);
+}
+
+function toTimeInputValue(dueDateIso: string): string {
+  return normalizeDeadline(dueDateIso).slice(11, 16);
 }
 
 export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, defaultRigor, onDelete }: WorkItemModalProps) {
@@ -47,6 +52,9 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
   const [title, setTitle] = useState(initial?.title ?? "");
   const [subject, setSubject] = useState(initial?.subject ?? "");
   const [dueDate, setDueDate] = useState(initial ? toDateInputValue(initial.dueDate) : "");
+  // 11:59 PM by default — what "due Friday" means for ordinary homework. Fully editable for the
+  // cases where the exact time matters (a test at 9:00 AM, an essay due at 3:00 PM).
+  const [dueTime, setDueTime] = useState(initial ? toTimeInputValue(initial.dueDate) : DEFAULT_DEADLINE_TIME);
   const [preferredStartDate, setPreferredStartDate] = useState(initial?.preferredStartDate ?? "");
   const [estimatedMinutes, setEstimatedMinutes] = useState(initial?.estimatedMinutes ?? 30);
   const [weight, setWeight] = useState<AssignmentWeight>(initial?.weight ?? "medium");
@@ -80,7 +88,7 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
       kind,
       title: trimmedTitle,
       subject: subject.trim() || undefined,
-      dueDate: `${dueDate}T23:59`,
+      dueDate: `${dueDate}T${dueTime || DEFAULT_DEADLINE_TIME}`,
       preferredStartDate: preferredStartDate || undefined,
       estimatedMinutes,
       weight,
@@ -136,14 +144,22 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
             error={dueDateError}
           />
           <Input
-            label="Estimated minutes"
-            type="number"
-            min={5}
-            step={5}
-            value={estimatedMinutes}
-            onChange={(e) => setEstimatedMinutes(Number(e.target.value))}
+            label="Due time"
+            type="time"
+            value={dueTime}
+            onChange={(e) => setDueTime(e.target.value)}
+            hint="Defaults to 11:59 PM"
           />
         </div>
+
+        <Input
+          label="Estimated minutes"
+          type="number"
+          min={5}
+          step={5}
+          value={estimatedMinutes}
+          onChange={(e) => setEstimatedMinutes(Number(e.target.value))}
+        />
 
         <Input
           label="Start no earlier than (optional)"

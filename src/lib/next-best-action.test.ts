@@ -32,6 +32,7 @@ function makeResult(overrides: Partial<GenerateScheduleResult> = {}): GenerateSc
     workloadStatus: { level: "on-track", message: "", estimatedRemainingMinutes: 0, availableMinutes: 0, bufferMinutes: 0 },
     dailyForecast: [],
     decisionExplanations: {},
+    deadlineCapacities: {},
     ...overrides,
   };
 }

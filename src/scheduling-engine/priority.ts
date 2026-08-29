@@ -8,10 +8,10 @@ import {
   ASSIGNMENT_WEIGHT_SCORE,
   DEADLINE_STRICTNESS_SCORE,
   DEFAULT_PRIORITY_WEIGHTS,
-  URGENCY_HORIZON_DAYS,
+  URGENCY_HALF_LIFE_DAYS,
   WORK_TYPE_SCORE,
 } from "./constants";
-import { diffInDays } from "./date-utils";
+import { diffInDays, normalizeDeadline } from "./date-utils";
 import type { PriorityBreakdown, SchedulableWorkItem } from "./types";
 
 /** Normalized workload factor: heavier remaining work justifies starting earlier. Caps at 3 hours. */
@@ -21,11 +21,16 @@ export function calculateWeightScore(item: SchedulableWorkItem): number {
   return ASSIGNMENT_WEIGHT_SCORE[item.weight];
 }
 
-/** 0 (far away) to 1 (due now or overdue). Decays linearly over `URGENCY_HORIZON_DAYS`. */
+/**
+ * 0 (far away) to 1 (due now or overdue), measured against the exact deadline timestamp rather
+ * than its calendar date (Phase 4.5A, Part 5/6). `daysUntilDue` is fractional, so a deadline six
+ * hours away and one thirty hours away are genuinely different — see `URGENCY_HALF_LIFE_DAYS`
+ * for why this curve is hyperbolic rather than a linear countdown.
+ */
 export function calculateUrgency(dueDate: string, now: string): number {
-  const daysUntilDue = diffInDays(now, dueDate);
+  const daysUntilDue = diffInDays(now, normalizeDeadline(dueDate));
   if (daysUntilDue <= 0) return 1;
-  return clamp01(1 - daysUntilDue / URGENCY_HORIZON_DAYS);
+  return clamp01(1 / (1 + daysUntilDue / URGENCY_HALF_LIFE_DAYS));
 }
 
 export function calculateStrictnessScore(item: SchedulableWorkItem): number {
@@ -40,8 +45,9 @@ export function calculateTypeScore(item: SchedulableWorkItem): number {
   return WORK_TYPE_SCORE[item.workType];
 }
 
+/** True once the exact deadline instant has passed — not merely once its calendar date has. */
 export function isOverdue(dueDate: string, now: string): boolean {
-  return diffInDays(now, dueDate) <= 0;
+  return diffInDays(now, normalizeDeadline(dueDate)) <= 0;
 }
 
 /**

@@ -967,6 +967,202 @@ describe("Phase 3B — scheduling decision explanations", () => {
   });
 });
 
+describe("Phase 4.5A — exact deadline times", () => {
+  it("never places a session that runs past the deadline instant", () => {
+    // Due Monday at 5:00 PM, availability 15:00-21:00 — only 15:00-17:00 is usable.
+    const item = makeAssignment({ dueDate: "2026-08-24T17:00", estimatedMinutes: 300, deadlineStrictness: "hard" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    const placed = workBlocks(result.blocks).filter((b) => b.workItemId === item.id);
+    expect(placed.length).toBeGreaterThan(0);
+    for (const block of placed) {
+      expect(minutesOfDay(block.end.split("T")[1])).toBeLessThanOrEqual(17 * 60);
+    }
+  });
+
+  it("gives an 8 AM exam less same-day prep opportunity than a 3 PM one", () => {
+    const base = { estimatedMinutes: 240, deadlineStrictness: "hard" as const, workType: "test-prep" as const };
+    const runWith = (dueDate: string) => {
+      const testItem = makeTest({ ...base, dueDate });
+      return generateSchedule({
+        userId: "u1",
+        rangeStart: "2026-08-24",
+        rangeEnd: "2026-08-25",
+        now: NOW,
+        workItems: [testItem],
+        commitments: [],
+        // Availability from 07:00 so an early-morning exam genuinely has *some* same-day room,
+        // making this a real comparison rather than one bounded by the window's start.
+        planningProfile: makePlanningProfile({
+          dailyAvailability: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, earliest: "07:00", latest: "21:00" })),
+        }),
+      });
+    };
+
+    const earlyExamTuesday = totalMinutes(
+      workBlocks(runWith("2026-08-25T08:00").blocks).filter((b) => toDateOnly(b.start) === "2026-08-25")
+    );
+    const afternoonExamTuesday = totalMinutes(
+      workBlocks(runWith("2026-08-25T15:00").blocks).filter((b) => toDateOnly(b.start) === "2026-08-25")
+    );
+
+    expect(afternoonExamTuesday).toBeGreaterThan(earlyExamTuesday);
+  });
+
+  it("never schedules prep after the exam's own deadline time", () => {
+    const testItem = makeTest({ dueDate: "2026-08-25T09:00", estimatedMinutes: 300, deadlineStrictness: "hard" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-26",
+      now: NOW,
+      workItems: [testItem],
+      commitments: [],
+      planningProfile: makePlanningProfile({
+        dailyAvailability: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, earliest: "07:00", latest: "21:00" })),
+      }),
+    });
+
+    for (const block of workBlocks(result.blocks).filter((b) => b.workItemId === testItem.id)) {
+      expect(block.end <= "2026-08-25T09:00").toBe(true);
+    }
+  });
+
+  it("reports usable time before the deadline rather than raw wall-clock time", () => {
+    const item = makeAssignment({ dueDate: "2026-08-25T23:59", estimatedMinutes: 60 });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-25",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    const capacity = result.deadlineCapacities[item.id];
+    expect(capacity).toBeDefined();
+    // ~40 hours of wall clock, but far less genuinely usable time.
+    expect(capacity.minutesUntilDeadline).toBeGreaterThan(2000);
+    expect(capacity.availableMinutes).toBeLessThan(capacity.minutesUntilDeadline);
+    expect(capacity.bufferMinutes).toBe(capacity.availableMinutes - 60);
+  });
+
+  it("warns when a hard deadline has less usable time left than the work needs", () => {
+    const item = makeAssignment({ dueDate: "2026-08-24T21:00", estimatedMinutes: 600, deadlineStrictness: "hard" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    expect(result.deadlineCapacities[item.id].risk).toBe("at-risk");
+    expect(result.warnings.some((w) => w.kind === "deadline-at-risk")).toBe(true);
+  });
+
+  it("does not raise a deadline-risk warning for flexible work, preserving the strictness hierarchy", () => {
+    const flexible = makeAssignment({ dueDate: "2026-08-24T21:00", estimatedMinutes: 600, deadlineStrictness: "flexible" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [flexible],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    expect(result.warnings.some((w) => w.kind === "deadline-at-risk")).toBe(false);
+  });
+
+  it("treats a legacy date-only deadline as 11:59 PM, keeping the whole day usable", () => {
+    const legacy = makeAssignment({ dueDate: "2026-08-24", estimatedMinutes: 120, deadlineStrictness: "hard" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [legacy],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    expect(result.deadlineCapacities[legacy.id].deadline).toBe("2026-08-24T23:59");
+    expect(totalMinutes(workBlocks(result.blocks).filter((b) => b.workItemId === legacy.id))).toBe(120);
+  });
+
+  it("recognizes that moving work later can push it past what the deadline allows", () => {
+    // Due Monday 9 PM with 3h of work: fits comfortably when Monday's window is free, but not once
+    // most of it is pinned to something else the student manually moved there.
+    const item = makeAssignment({ dueDate: "2026-08-24T21:00", estimatedMinutes: 180, deadlineStrictness: "hard" });
+    const blocker: ScheduleBlock = {
+      id: "moved_other",
+      userId: "u1",
+      workItemId: "other-item",
+      title: "Something else, moved here",
+      start: "2026-08-24T15:00",
+      end: "2026-08-24T19:00",
+      origin: "manual-override",
+      status: "planned",
+    };
+
+    const before = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile({ workloadTolerance: "heavy" }),
+    });
+    const after = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-24",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      existingBlocks: [blocker],
+      planningProfile: makePlanningProfile({ workloadTolerance: "heavy" }),
+    });
+
+    expect(before.deadlineCapacities[item.id].risk).not.toBe("at-risk");
+    expect(after.deadlineCapacities[item.id].risk).toBe("at-risk");
+    expect(after.warnings.some((w) => w.kind === "deadline-at-risk")).toBe(true);
+    // The manual override itself is still respected, not quietly discarded.
+    expect(after.blocks).toContainEqual(blocker);
+  });
+
+  it("explains the decision using the real deadline time", () => {
+    const item = makeAssignment({ dueDate: "2026-08-25T15:00", estimatedMinutes: 60, deadlineStrictness: "hard" });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: "2026-08-24",
+      rangeEnd: "2026-08-25",
+      now: NOW,
+      workItems: [item],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+
+    const bullets = result.decisionExplanations[item.id].bullets;
+    expect(bullets.some((b) => b.includes("Due tomorrow at 3:00 PM"))).toBe(true);
+    expect(bullets.some((b) => b.includes("usable time"))).toBe(true);
+  });
+});
+
 describe("Phase 4 — stage-based scheduling", () => {
   it("only offers the active (first eligible) stage — never the whole decomposed item", () => {
     const project = makeProject({ estimatedMinutes: 200, dueDate: "2026-08-30T23:59:00" });

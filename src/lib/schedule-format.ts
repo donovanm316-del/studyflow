@@ -1,6 +1,7 @@
 import type { ScheduleBlock, WorkStage } from "@/types/models";
 import type { ScheduleBlockCardProps } from "@/components/schedule/ScheduleBlockCard";
 import type { NewWorkItemInput } from "@/lib/data/store";
+import { normalizeDeadline } from "@/scheduling-engine";
 import type { SchedulableWorkItem } from "@/scheduling-engine";
 
 export function blockCardKind(block: ScheduleBlock): ScheduleBlockCardProps["kind"] {
@@ -21,15 +22,34 @@ export function formatTimeRange(block: ScheduleBlock): string {
   return `${formatClockTime(block.start)} – ${formatClockTime(block.end)}`;
 }
 
-export function formatDueLabel(dueDateIso: string, todayDateOnly: string): string {
-  const dueDateOnly = dueDateIso.slice(0, 10);
-  if (dueDateOnly < todayDateOnly) return "Overdue";
-  if (dueDateOnly === todayDateOnly) return "Due today";
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-  const diffDays = Math.round(
-    (dateOnlyToUtcMs(dueDateOnly) - dateOnlyToUtcMs(todayDateOnly)) / 86_400_000
-  );
-  if (diffDays === 1) return "Due tomorrow";
+/**
+ * A deadline label carrying the exact time, since Phase 4.5A deadlines are real timestamps:
+ * "Due today at 11:59 PM", "Due tomorrow at 3:00 PM", "Due Monday at 8:00 AM",
+ * "Due in 4 days at 11:59 PM", "Overdue · was due yesterday at 11:59 PM".
+ *
+ * The time is always shown for a deadline that's near (today/tomorrow/overdue) or on a named
+ * weekday, because that's when it changes what a student should do. Beyond a week out the phrasing
+ * stays coarse ("Due in 9 days") — precision that far ahead is noise, not context.
+ */
+export function formatDueLabel(dueDateIso: string, todayDateOnly: string): string {
+  const normalized = normalizeDeadline(dueDateIso);
+  const dueDateOnly = normalized.slice(0, 10);
+  const time = formatClockTime(normalized);
+
+  const diffDays = Math.round((dateOnlyToUtcMs(dueDateOnly) - dateOnlyToUtcMs(todayDateOnly)) / 86_400_000);
+
+  if (diffDays < 0) {
+    if (diffDays === -1) return `Overdue · was due yesterday at ${time}`;
+    return `Overdue · was due ${Math.abs(diffDays)} days ago at ${time}`;
+  }
+  if (diffDays === 0) return `Due today at ${time}`;
+  if (diffDays === 1) return `Due tomorrow at ${time}`;
+  if (diffDays <= 6) {
+    const [y, m, d] = dueDateOnly.split("-").map(Number);
+    return `Due ${DAY_NAMES[new Date(y, m - 1, d).getDay()]} at ${time}`;
+  }
   return `Due in ${diffDays} days`;
 }
 
@@ -55,7 +75,9 @@ export function blockMatchesWorkItem(block: ScheduleBlock, workItemId: string, s
  *  "your schedule was updated" notice (Phase 3B, Part 8/9), not every cosmetic change. */
 export function changesSchedule(before: SchedulableWorkItem, after: NewWorkItemInput): boolean {
   return (
-    before.dueDate !== after.dueDate ||
+    // Normalized so a legacy date-only value vs. its "T23:59" equivalent isn't reported as a
+    // change, while a genuine time edit (11:59 PM → 9:00 AM) correctly is.
+    normalizeDeadline(before.dueDate) !== normalizeDeadline(after.dueDate) ||
     before.estimatedMinutes !== after.estimatedMinutes ||
     before.weight !== after.weight ||
     before.deadlineStrictness !== after.deadlineStrictness ||

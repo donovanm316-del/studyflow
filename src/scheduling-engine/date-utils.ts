@@ -90,3 +90,35 @@ export function blockDurationMinutes(startIso: string, endIso: string): number {
   const end = minutesOfDay(endIso.split("T")[1] ?? endIso);
   return end - start;
 }
+
+/**
+ * The end of the day, used as the implied deadline time whenever one isn't specified — both for
+ * legacy date-only data and for the "Due date" field's default (Phase 4.5A, Part 2/3).
+ */
+export const DEFAULT_DEADLINE_TIME = "23:59";
+
+/**
+ * Coerces any stored deadline into a full "YYYY-MM-DDTHH:mm" timestamp (Phase 4.5A, Part 1/2).
+ *
+ * Pre-4.5A data may hold a bare "YYYY-MM-DD" (or a value with seconds, e.g. from the test
+ * fixtures). A date with no time is interpreted as 11:59 PM local — the end of the day it was
+ * due, which is what a student means by "due Friday" — never midnight, which would silently make
+ * the item a full day more urgent than intended. Idempotent: a value that already carries a time
+ * is returned with just its seconds trimmed, so this is safe to call defensively anywhere.
+ */
+export function normalizeDeadline(dueDate: string): string {
+  const [datePart, timePart] = dueDate.split("T");
+  if (!timePart) return `${datePart}T${DEFAULT_DEADLINE_TIME}`;
+  const [h, m] = timePart.split(":");
+  return `${datePart}T${h}:${m}`;
+}
+
+/** Minutes from `fromIso` until `toIso` — negative once `toIso` is in the past. Time-aware. */
+export function minutesUntil(fromIso: string, toIso: string): number {
+  return (parseLocal(toIso).getTime() - parseLocal(fromIso).getTime()) / 60_000;
+}
+
+/** Hours from `fromIso` until `toIso` — negative once `toIso` is in the past. Time-aware. */
+export function hoursUntil(fromIso: string, toIso: string): number {
+  return minutesUntil(fromIso, toIso) / 60;
+}

@@ -33,10 +33,41 @@ engine:
 | `explanation.ts` | `explainScheduleDecision` — turns priority/urgency/session-count data the engine already has into a structured "why was this scheduled" breakdown (Phase 3B) |
 | `schedule-diff.ts` | `diffSchedules` — compares two `ScheduleBlock[]` snapshots and reports only the work items whose footprint actually changed (Phase 3B) |
 | `decomposition.ts` | `suggestStages`, `nextEligibleStage`, `isStageEligible`, `stageProgress`, `renumberStages` — turns a large project/essay/test-prep item into an ordered `WorkStage[]` and answers which single stage, if any, is eligible to be scheduled right now (Phase 4) |
+| `deadline-capacity.ts` | `calculateAvailableMinutesBeforeDeadline`, `calculateDeadlineCapacity` — how much *usable* work time genuinely remains before an exact deadline, and whether the remaining work still fits (Phase 4.5A) |
 | `scheduler.ts` | `generateSchedule`, `scheduleTask`, `detectOverload`, `replanRemainingSchedule` — orchestrates everything above |
 | `index.ts` | The only module the UI should import from |
 
-## Current status (Phase 2 + 2.5 + 3A + 3B + 4)
+## Current status (Phase 2 + 2.5 + 3A + 3B + 4 + 4.5A)
+
+**Phase 4.5A additions — exact deadline times.** Deadlines are full `YYYY-MM-DDTHH:mm` timestamps
+end to end. `normalizeDeadline` coerces any legacy date-only value to 11:59 PM that day (the end of
+the day it was due — never midnight, which would silently make it a day more urgent), and is
+applied on load in the store plus defensively wherever the engine reads a deadline, so old saves
+keep working untouched.
+
+`calculateUrgency` now decays hyperbolically (`1 / (1 + daysLeft / URGENCY_HALF_LIFE_DAYS)`)
+against the exact timestamp rather than linearly over a 10-day horizon. The old curve was nearly
+flat across the final two days — "due tonight" and "due tomorrow night" scored 0.975 vs 0.875, a
+difference of 0.028 once weighted, which is precisely the distinction that matters most. The new
+curve gives that pair 0.89 vs 0.62 while still ranking far-off work well below near work. Every
+other priority factor (weight, strictness, workload, type, overdue) is unchanged, as is the
+`URGENT_PROTECTION_HORIZON_DAYS` near-deadline protection.
+
+`deadline-capacity.ts` answers "is there actually time for this?" honestly: it walks real
+availability windows minus commitments minus existing blocks between now and the deadline, clipping
+the first day at the current time and the last at the deadline instant — so a task due in 14
+wall-clock hours overnight correctly reports far less than 14 hours of capacity. Results surface as
+`GenerateScheduleResult.deadlineCapacities` (buffer/shortfall plus a four-level risk read), feed the
+"why today?" explanations, and raise a `deadline-at-risk` warning for hard/important items whose
+work no longer fits — which is what makes a risky manual move visible instead of silently fine.
+
+Placement gained a per-item `deadlineCap`: no session may run past the deadline instant. For
+tests/quizzes this replaces the blunt Phase 3A rule *only when the student actually gave an exam
+time* — an unspecified deadline still defaults to 23:59, which is an absence of information rather
+than a claim about the exam, so the whole exam day stays excluded in that case. With a real time, a
+9:00 AM exam leaves only that morning's window and a 3:00 PM one leaves considerably more.
+
+## Previous status (Phase 2 + 2.5 + 3A + 3B + 4)
 
 **Phase 4 additions:** `decomposition.ts` proposes a stage breakdown for large projects, essays, and
 test/quiz prep (conservatively — routine homework/reading never qualify, see
@@ -110,6 +141,11 @@ for this module — see Part 24 of the Phase 2 spec.
 - `calculateWorkloadStatus` and `dailyForecast` inherit the single-per-range daily capacity target
   above — they're an honest reflection of what the engine actually computed for that call, not an
   independently-tuned "true" forecast.
+- Deadlines are interpreted in the browser's local time with no timezone model (Phase 4.5A) —
+  consistent for one student on one device, but a deadline does not travel across timezones.
+- `deadlineCapacities` measures available time against the blocks that existed *before* this
+  placement pass, so it answers "is there room for this work?" rather than "is there room left
+  after scheduling it?" — the two would otherwise make every scheduled item look starved.
 - A decomposed item only ever contributes its *active* stage's minutes to demand/capacity/forecast
   numbers — later stages in the chain aren't reserved for in advance. This matches the spec's
   worked examples (complete a stage → the next one becomes schedulable on the next call) but means

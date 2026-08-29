@@ -61,8 +61,34 @@ export const DEFAULT_SPLITTABLE_WORK_TYPES: ReadonlySet<WorkType> = new Set([
   "test-prep",
 ]);
 
-/** Urgency reaches its maximum at 0 days out and decays to ~0 by this many days out. */
-export const URGENCY_HORIZON_DAYS = 10;
+/**
+ * Urgency decays as `1 / (1 + daysLeft / URGENCY_HALF_LIFE_DAYS)` — hyperbolic, not linear
+ * (Phase 4.5A, Part 6). `daysLeft` is fractional and measured to the exact deadline timestamp, so
+ * "due tonight at 11:59" and "due tomorrow at 11:59" produce genuinely different urgency instead
+ * of two near-identical values.
+ *
+ * Why this replaced the old linear `1 - days/10` decay: that curve is almost flat across the last
+ * two days (0.975 vs 0.875 for tonight vs tomorrow — a 0.028 difference once weighted), which is
+ * exactly the distinction a student most needs the scheduler to make. The hyperbolic curve gives
+ * the same pair 0.89 vs 0.62, while still ranking a 10-day-out item well below a 3-day-out one.
+ * The value is the number of days at which urgency reaches 0.5.
+ */
+export const URGENCY_HALF_LIFE_DAYS = 2;
+
+/**
+ * A deadline closer than this many hours is "imminent" — used for explanation wording and for
+ * the deadline-risk assessment, not as a separate urgency term (the curve above already handles
+ * scoring). 24 hours = "due by this time tomorrow".
+ */
+export const IMMINENT_DEADLINE_HOURS = 24;
+
+/**
+ * A deadline is reported as at-risk once available usable work time before it drops below
+ * `estimated remaining work × this factor` (Phase 4.5A, Part 8). Slightly above 1 so an item that
+ * only *exactly* fits — leaving no room for a session running long — is still flagged as tight
+ * rather than quietly called safe.
+ */
+export const DEADLINE_COMFORT_FACTOR = 1.15;
 
 /**
  * Items due within this many days get first access to shared daily capacity, ahead of anything
