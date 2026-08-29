@@ -209,6 +209,10 @@ export function personalizeEstimate(item: SchedulableWorkItem, history: Estimate
     reason: "",
   };
 
+  // The student can opt this item out entirely (Phase 4.5D, Part 1). History keeps accumulating —
+  // only its influence on *this* item's planning is switched off, so the choice is reversible.
+  if (item.usePersonalizedEstimate === false) return unadjusted;
+
   const resolved = resolveBucket(history, item);
   if (!resolved) return unadjusted;
 

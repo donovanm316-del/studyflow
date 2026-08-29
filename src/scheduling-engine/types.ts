@@ -130,6 +130,15 @@ export interface GenerateScheduleResult {
    * student's number was used unchanged, which is the case until real history accumulates.
    */
   estimateAdjustments: Record<string, EstimateAdjustment>;
+  /**
+   * Genuinely unclaimed minutes left today: real availability from *now* to the end of the day,
+   * minus commitments, minus work still ahead (Phase 4.5D).
+   *
+   * Deliberately not derived from `dailyForecast`, whose `availableMinutes` is capped at the daily
+   * capacity *target*. Subtracting work from that yields leftover capacity, not free time — it told
+   * a student with six hours of evening left that they had ninety minutes free.
+   */
+  freeMinutesRemainingToday: number;
 }
 
 /** Input for recomputing a plan after something changes (missed session, new item, moved due date). */

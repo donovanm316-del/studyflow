@@ -335,6 +335,170 @@ describe("Scenario J — the student changes work style", () => {
   });
 });
 
+describe("Phase 4.5D — student control over personalization", () => {
+  const runs = (item: SchedulableWorkItem) => run([item], { workSessions: history(item.id, 10, 1.4) });
+
+  it("adjusts by default, preserving the Phase 4.5C behavior for existing items", () => {
+    const item = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-29T23:59" });
+    expect(item.usePersonalizedEstimate).toBeUndefined();
+    expect(runs(item).estimateAdjustments[item.id].adjusted).toBe(true);
+  });
+
+  it("plans with the student's exact estimate when they opt out", () => {
+    const item = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-29T23:59", usePersonalizedEstimate: false });
+    const result = runs(item);
+
+    expect(result.estimateAdjustments[item.id].adjusted).toBe(false);
+    expect(result.estimateAdjustments[item.id].planningMinutes).toBe(60);
+    expect(minutes(work(result.blocks))).toBe(60);
+    expect(result.workloadStatus.estimatedRemainingMinutes).toBe(60);
+  });
+
+  it("keeps the student's original estimate intact either way", () => {
+    const on = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-29T23:59" });
+    const off = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-29T23:59", usePersonalizedEstimate: false });
+
+    expect(runs(on).estimateAdjustments[on.id].studentMinutes).toBe(60);
+    expect(runs(off).estimateAdjustments[off.id].studentMinutes).toBe(60);
+  });
+
+  it("opting one item out does not affect another item's personalization", () => {
+    const optedOut = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-29T23:59", usePersonalizedEstimate: false });
+    const normal = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-29T23:59" });
+    const result = run([optedOut, normal], { workSessions: [...history(optedOut.id, 10, 1.4), ...history(normal.id, 10, 1.4)] });
+
+    expect(result.estimateAdjustments[optedOut.id].adjusted).toBe(false);
+    expect(result.estimateAdjustments[normal.id].adjusted).toBe(true);
+  });
+
+  it("still records history for an opted-out item, so the choice is reversible", () => {
+    const item = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-29T23:59", usePersonalizedEstimate: false });
+    const sessions = history(item.id, 10, 1.4);
+
+    // The same history, with the flag flipped back on, produces a real adjustment — nothing was lost.
+    const reEnabled = run([{ ...item, usePersonalizedEstimate: true }], { workSessions: sessions });
+    expect(reEnabled.estimateAdjustments[item.id].adjusted).toBe(true);
+  });
+});
+
+describe("Phase 4.5D — the engine is blind to where a work item came from", () => {
+  it("schedules an imported item identically to a manually created one", () => {
+    // The guarantee a future Google Classroom import depends on: provenance is display metadata,
+    // never a scheduling input.
+    const base = { estimatedMinutes: 90, dueDate: "2026-08-28T23:59", deadlineStrictness: "hard" as const };
+    const manual = makeAssignment({ ...base, id: "same-id" });
+    const importedItem = makeAssignment({
+      ...base,
+      id: "same-id",
+      source: "google-classroom",
+      externalId: "gc-1",
+      externalUrl: "https://classroom.example/a/gc-1",
+    });
+
+    const fromManual = run([manual]);
+    const fromImport = run([importedItem]);
+
+    expect(work(fromImport.blocks).map((b) => `${b.start}|${b.end}`)).toEqual(
+      work(fromManual.blocks).map((b) => `${b.start}|${b.end}`)
+    );
+    expect(fromImport.deadlineCapacities[importedItem.id].availableMinutes).toBe(
+      fromManual.deadlineCapacities[manual.id].availableMinutes
+    );
+  });
+});
+
+describe("Phase 4.5D — edge cases", () => {
+  it("C: an already-overdue item is reported overdue, not merely urgent", () => {
+    const overdue = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-20T23:59", deadlineStrictness: "hard" });
+    const result = run([overdue]);
+    expect(result.deadlineCapacities[overdue.id].risk).toBe("overdue");
+  });
+
+  it("B: an item due in 30 minutes is treated as maximally urgent", () => {
+    const imminent = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-24T08:30", deadlineStrictness: "hard" });
+    const later = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-28T23:59", deadlineStrictness: "hard" });
+    const result = run([imminent, later]);
+    expect(result.priorities[imminent.id].score).toBeGreaterThan(result.priorities[later.id].score);
+  });
+
+  it("F: no availability at all produces an honest overload warning, not an empty plan", () => {
+    const item = makeAssignment({ estimatedMinutes: 120, dueDate: "2026-08-26T23:59", deadlineStrictness: "hard" });
+    const result = run([item], {}, makePlanningProfile({ dailyAvailability: [] }));
+
+    expect(work(result.blocks)).toHaveLength(0);
+    expect(result.unscheduledWorkItemIds).toContain(item.id);
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.workloadStatus.level).toBe("at-risk");
+  });
+
+  it("G: when work exceeds available time, flexible work is named as movable", () => {
+    const hard = makeAssignment({ estimatedMinutes: 600, dueDate: "2026-08-25T23:59", deadlineStrictness: "hard" });
+    const flexible = makeAssignment({ title: "Optional reading", estimatedMinutes: 600, dueDate: "2026-08-25T23:59", deadlineStrictness: "flexible" });
+    const overload = run([hard, flexible]).warnings.find((w) => w.kind === "overloaded-range");
+
+    expect(overload).toBeDefined();
+    expect(overload!.message).toContain("Optional reading");
+  });
+
+  it("J: changing a deadline moves the work with it", () => {
+    const item = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-30T23:59", deadlineStrictness: "hard" });
+    const pulledIn = { ...item, dueDate: "2026-08-25T23:59" };
+
+    const before = run([item], {}, makePlanningProfile({ workStyle: "deadline_driven" }));
+    const after = run([pulledIn], {}, makePlanningProfile({ workStyle: "deadline_driven" }));
+
+    const lastDay = (r: ReturnType<typeof run>) =>
+      work(r.blocks).sort((a, b) => (a.start < b.start ? 1 : -1))[0].start.slice(0, 10);
+    expect(lastDay(after) < lastDay(before)).toBe(true);
+  });
+
+  it("K: changing the estimate updates both the schedule and the deadline buffer", () => {
+    const small = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-28T23:59" });
+    const larger = { ...small, estimatedMinutes: 180 };
+
+    const a = run([small]);
+    const b = run([larger]);
+
+    expect(minutes(work(b.blocks))).toBeGreaterThan(minutes(work(a.blocks)));
+    expect(b.deadlineCapacities[small.id].bufferMinutes).toBeLessThan(a.deadlineCapacities[small.id].bufferMinutes);
+  });
+
+  it("N: completing work early leaves only the genuine remainder scheduled", () => {
+    const item = makeAssignment({ estimatedMinutes: 120, actualMinutes: 90, dueDate: "2026-08-28T23:59" });
+    expect(minutes(work(run([item]).blocks))).toBe(30);
+  });
+
+  it("O: work never overlaps a fixed commitment", () => {
+    const commitment = makeCommitment({ recurrence: { type: "weekly", daysOfWeek: [0, 1, 2, 3, 4, 5, 6] }, startTime: "16:00", endTime: "18:00" });
+    const item = makeAssignment({ estimatedMinutes: 300, dueDate: "2026-08-28T23:59", deadlineStrictness: "hard" });
+
+    for (const block of work(run([item], { commitments: [commitment] }).blocks)) {
+      const start = minutesOfDay(block.start.split("T")[1]);
+      const end = minutesOfDay(block.end.split("T")[1]);
+      expect(start < 18 * 60 && end > 16 * 60).toBe(false);
+    }
+  });
+
+  it("P: no history means no personalized estimate is invented", () => {
+    const item = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-28T23:59" });
+    const adjustment = run([item], { workSessions: [] }).estimateAdjustments[item.id];
+
+    expect(adjustment.adjusted).toBe(false);
+    expect(adjustment.confidence).toBe("insufficient");
+    expect(adjustment.reason).toBe("");
+  });
+
+  it("Q/R: limited history adjusts more conservatively than strong history", () => {
+    const item = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-29T23:59" });
+    const limited = run([item], { workSessions: history(item.id, 3, 1.4) }).estimateAdjustments[item.id];
+    const strong = run([item], { workSessions: history(item.id, 12, 1.4) }).estimateAdjustments[item.id];
+
+    expect(limited.planningMinutes).toBeLessThan(strong.planningMinutes);
+    expect(limited.confidence).toBe("limited");
+    expect(strong.planningMinutes).toBeLessThanOrEqual(60 * 1.5); // still bounded
+  });
+});
+
 describe("Part 5 — one planning estimate used consistently", () => {
   const item = makeAssignment({ estimatedMinutes: 60, dueDate: "2026-08-29T23:59" });
   const withHistory = () => run([item], { workSessions: history(item.id, 10, 1.4) });

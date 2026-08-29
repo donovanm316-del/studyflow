@@ -6,7 +6,7 @@
  * different answer than the engine actually used — it just narrates it.
  */
 import { explainPriority } from "./priority";
-import { formatMinutesAsHoursMinutes, normalizeDeadline, toDateOnly } from "./date-utils";
+import { addDays, formatClockTime, formatMinutesAsHoursMinutes, normalizeDeadline, toDateOnly, weekdayName } from "./date-utils";
 import type { DeadlineCapacity } from "./deadline-capacity";
 import type { PriorityBreakdown, SchedulableWorkItem, ScheduleDecisionExplanation } from "./types";
 
@@ -30,26 +30,8 @@ function describeDeadline(deadlineIso: string, now: string): string {
     const hour = Number(deadlineIso.split("T")[1].split(":")[0]);
     return `${hour >= 17 ? "tonight" : "today"} at ${time}`;
   }
-
-  const dayAfter = addDaysToDateOnly(today, 1);
-  if (deadlineDate === dayAfter) return `tomorrow at ${time}`;
-
-  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const [y, m, d] = deadlineDate.split("-").map(Number);
-  return `${dayNames[new Date(y, m - 1, d).getDay()]} at ${time}`;
-}
-
-function formatClockTime(isoDateTime: string): string {
-  const [h, m] = isoDateTime.split("T")[1].split(":").map(Number);
-  const period = h >= 12 ? "PM" : "AM";
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${m.toString().padStart(2, "0")} ${period}`;
-}
-
-function addDaysToDateOnly(dateOnly: string, days: number): string {
-  const [y, m, d] = dateOnly.split("-").map(Number);
-  const date = new Date(y, m - 1, d + days);
-  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`;
+  if (deadlineDate === addDays(today, 1)) return `tomorrow at ${time}`;
+  return `${weekdayName(deadlineDate)} at ${time}`;
 }
 
 export function explainScheduleDecision(

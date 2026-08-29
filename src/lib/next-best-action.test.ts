@@ -34,6 +34,7 @@ function makeResult(overrides: Partial<GenerateScheduleResult> = {}): GenerateSc
     decisionExplanations: {},
     deadlineCapacities: {},
     estimateAdjustments: {},
+    freeMinutesRemainingToday: 0,
     ...overrides,
   };
 }

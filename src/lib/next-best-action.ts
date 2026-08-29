@@ -75,7 +75,7 @@ export function getNextBestAction(
       message: result.caughtUp ? "You're caught up." : "Nothing else is scheduled today.",
       optional: result.caughtUp ? result.workAheadSuggestions : [],
       // Free time is a real, protected outcome worth naming — not empty space to fill (Part 11).
-      freeMinutes: freeMinutesToday(result, nowIso),
+      freeMinutes: freeMinutesToday(result),
     };
   }
 

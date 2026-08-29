@@ -15,6 +15,7 @@ import {
   minutesUntil,
   normalizeDeadline,
   toDateOnly,
+  weekdayName,
   type DeadlineCapacity,
   type GenerateScheduleInput,
   type GenerateScheduleResult,
@@ -429,12 +430,6 @@ export function recommendStartDate(
   };
 }
 
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-function weekdayName(dateOnly: string): string {
-  const [y, m, d] = dateOnly.split("-").map(Number);
-  return DAY_NAMES[new Date(y, m - 1, d).getDay()];
-}
-
 /* ------------------------------------------------------------------ *
  * Weekly plan health + week explanation (Part 9 / Part 10)
  * ------------------------------------------------------------------ */
@@ -516,12 +511,13 @@ export function summarizeWeek(result: GenerateScheduleResult): WeekSummary {
  * Free time still protected today (Part 11)
  * ------------------------------------------------------------------ */
 
-/** Usable minutes today that no work or commitment is currently claiming, from the real forecast. */
-export function freeMinutesToday(result: GenerateScheduleResult, now: string): number {
-  const today = toDateOnly(now);
-  const entry = result.dailyForecast.find((d) => d.date === today);
-  if (!entry) return 0;
-  return Math.max(0, entry.availableMinutes - entry.workMinutes);
+/**
+ * Genuinely unclaimed minutes left today. Reads the engine's own figure rather than deriving one
+ * from `dailyForecast`, whose `availableMinutes` is capped at the daily capacity *target* —
+ * subtracting work from that gives leftover capacity, not free time.
+ */
+export function freeMinutesToday(result: GenerateScheduleResult): number {
+  return result.freeMinutesRemainingToday;
 }
 
 /** Hours until a deadline, used for wording — re-exported so UI needn't import engine internals. */

@@ -1,7 +1,7 @@
 import type { ScheduleBlock, WorkStage } from "@/types/models";
 import type { ScheduleBlockCardProps } from "@/components/schedule/ScheduleBlockCard";
 import type { NewWorkItemInput } from "@/lib/data/store";
-import { normalizeDeadline } from "@/scheduling-engine";
+import { daysBetweenDateOnly, formatClockTime, normalizeDeadline, weekdayName } from "@/scheduling-engine";
 import type { SchedulableWorkItem } from "@/scheduling-engine";
 
 export function blockCardKind(block: ScheduleBlock): ScheduleBlockCardProps["kind"] {
@@ -10,19 +10,9 @@ export function blockCardKind(block: ScheduleBlock): ScheduleBlockCardProps["kin
   return block.workItemKind ?? "assignment";
 }
 
-function formatClockTime(isoDateTime: string): string {
-  const timePart = isoDateTime.split("T")[1] ?? "00:00";
-  const [h, m] = timePart.split(":").map(Number);
-  const period = h >= 12 ? "PM" : "AM";
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${m.toString().padStart(2, "0")} ${period}`;
-}
-
 export function formatTimeRange(block: ScheduleBlock): string {
   return `${formatClockTime(block.start)} – ${formatClockTime(block.end)}`;
 }
-
-const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /**
  * A deadline label carrying the exact time, since Phase 4.5A deadlines are real timestamps:
@@ -38,7 +28,7 @@ export function formatDueLabel(dueDateIso: string, todayDateOnly: string): strin
   const dueDateOnly = normalized.slice(0, 10);
   const time = formatClockTime(normalized);
 
-  const diffDays = Math.round((dateOnlyToUtcMs(dueDateOnly) - dateOnlyToUtcMs(todayDateOnly)) / 86_400_000);
+  const diffDays = daysBetweenDateOnly(todayDateOnly, dueDateOnly);
 
   if (diffDays < 0) {
     if (diffDays === -1) return `Overdue · was due yesterday at ${time}`;
@@ -46,16 +36,8 @@ export function formatDueLabel(dueDateIso: string, todayDateOnly: string): strin
   }
   if (diffDays === 0) return `Due today at ${time}`;
   if (diffDays === 1) return `Due tomorrow at ${time}`;
-  if (diffDays <= 6) {
-    const [y, m, d] = dueDateOnly.split("-").map(Number);
-    return `Due ${DAY_NAMES[new Date(y, m - 1, d).getDay()]} at ${time}`;
-  }
+  if (diffDays <= 6) return `Due ${weekdayName(dueDateOnly)} at ${time}`;
   return `Due in ${diffDays} days`;
-}
-
-function dateOnlyToUtcMs(dateOnly: string): number {
-  const [y, m, d] = dateOnly.split("-").map(Number);
-  return Date.UTC(y, m - 1, d);
 }
 
 /**

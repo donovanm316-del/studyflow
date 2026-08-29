@@ -97,6 +97,41 @@ export function blockDurationMinutes(startIso: string, endIso: string): number {
  */
 export const DEFAULT_DEADLINE_TIME = "23:59";
 
+export const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+export const SHORT_DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "Monday" for a "YYYY-MM-DD" value, computed without timezone shifting. */
+export function weekdayName(dateOnly: string): string {
+  return DAY_NAMES[dayOfWeekOf(dateOnly)];
+}
+
+/** "Mon" for a "YYYY-MM-DD" value. */
+export function shortWeekdayName(dateOnly: string): string {
+  return SHORT_DAY_NAMES[dayOfWeekOf(dateOnly)];
+}
+
+/**
+ * "3:00 PM" from a "YYYY-MM-DDTHH:mm" (or bare "HH:mm") value. Lives here rather than in a UI
+ * module because the engine's own explanations need it too, and three separate copies had already
+ * drifted into the codebase by Phase 4.5C.
+ */
+export function formatClockTime(isoDateTimeOrTime: string): string {
+  const timePart = isoDateTimeOrTime.includes("T") ? isoDateTimeOrTime.split("T")[1] : isoDateTimeOrTime;
+  const [h, m] = timePart.split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${m.toString().padStart(2, "0")} ${period}`;
+}
+
+/** Whole days between two "YYYY-MM-DD" values, using UTC arithmetic to avoid DST drift. */
+export function daysBetweenDateOnly(from: string, to: string): number {
+  const toUtcMs = (dateOnly: string) => {
+    const [y, m, d] = dateOnly.split("-").map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((toUtcMs(to) - toUtcMs(from)) / 86_400_000);
+}
+
 /**
  * Coerces any stored deadline into a full "YYYY-MM-DDTHH:mm" timestamp (Phase 4.5A, Part 1/2).
  *

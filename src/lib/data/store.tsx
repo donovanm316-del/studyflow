@@ -10,7 +10,6 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type {
-  ActiveWorkSession,
   Commitment,
   PlanningProfile,
   ScheduleBlock,
@@ -21,50 +20,16 @@ import type {
 import {
   calculateBreakPreferenceAdjustment,
   calculateFreeTimePriorityAdjustment,
-  normalizeDeadline,
   renumberStages,
   type SchedulableWorkItem,
 } from "@/scheduling-engine";
 import { fixedBlocksAfterMove, fixedBlocksAfterReplanToday } from "@/lib/schedule-mutations";
+import { DEFAULT_PLANNING_PROFILE, DEMO_USER_ID, migrateSavedState, type AppState } from "./migrate";
 
 const STORAGE_KEY = "studyflow.appData.v1";
 
-/** No real accounts yet (Settings' Profile section is still a placeholder) — one local user id. */
-const DEMO_USER_ID = "demo-user";
-
-interface AppState {
-  workItems: SchedulableWorkItem[];
-  commitments: Commitment[];
-  planningProfile: PlanningProfile;
-  /** Only completed/skipped/manual-override blocks are persisted — generated ones are recomputed live. */
-  fixedBlocks: ScheduleBlock[];
-  workSessions: WorkSession[];
-  feedback: ScheduleFeedback[];
-  /** Stages for decomposed work items (Phase 4), across every item — grouped by `workItemId` where
-   *  needed. Empty for any item the student hasn't chosen to plan in stages. */
-  stages: WorkStage[];
-  /** At most one work session in progress at a time (Phase 3A, Part 4). */
-  activeSession: ActiveWorkSession | null;
-  /**
-   * False only for a genuine first-ever visit (no saved data at all) — gates the onboarding
-   * redirect in `(app)/layout.tsx`. Existing users are never sent back through onboarding: see
-   * the hydration effect below, which defaults this to `true` for any successfully loaded save,
-   * even one from before this field existed.
-   */
-  onboardingComplete: boolean;
-}
-
-const DEFAULT_PLANNING_PROFILE: PlanningProfile = {
-  userId: DEMO_USER_ID,
-  dailyAvailability: [],
-  preferredSessionMinutes: 45,
-  bufferDays: 1,
-  autoBreaks: true,
-  workloadTolerance: "moderate",
-  breakPreference: "balanced",
-  freeTimePriority: "medium",
-  workStyle: "early",
-};
+// `AppState`, `DEFAULT_PLANNING_PROFILE` and the load-time migration all live in ./migrate so the
+// defensive parsing can be tested directly against real legacy save shapes.
 
 /**
  * A static, date-free starting point — used for both server rendering and the client's very
@@ -162,47 +127,20 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   // (Phase 3B, Part 11/23); a parse failure on corrupt data also falls back to empty rather than
   // silently discarding what might still be partially recoverable data by guessing.
   useEffect(() => {
-    let next: AppState | null = null;
+    let parsed: unknown = null;
     let hadSavedData = false;
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         hadSavedData = true;
-        next = JSON.parse(raw) as AppState;
+        parsed = JSON.parse(raw);
       }
     } catch {
-      // Corrupt or inaccessible storage — fall through to a fresh empty state below.
-    }
-    if (next) {
-      // Existing save (even one from before `onboardingComplete` existed) — never force onboarding.
-      next.onboardingComplete = next.onboardingComplete ?? true;
-      next.activeSession = next.activeSession ?? null;
-      // Pre-Phase-4 saves have no `stages` array at all — every existing work item simply behaves
-      // as a single-stage item until the student chooses to decompose it (Phase 4, Part 37).
-      next.stages = next.stages ?? [];
-      // Pre-Phase-4.5A saves may hold a bare "YYYY-MM-DD" deadline. Normalize once on load so the
-      // rest of the app only ever sees full timestamps — a date with no time means the end of that
-      // day, 11:59 PM (Phase 4.5A, Part 2). Nothing is dropped or rewritten beyond adding the
-      // implied time, so an existing student never has to re-enter an assignment.
-      next.workItems = (next.workItems ?? []).map((item) => ({ ...item, dueDate: normalizeDeadline(item.dueDate) }));
-    } else {
-      next = {
-        workItems: [],
-        commitments: [],
-        planningProfile: DEFAULT_PLANNING_PROFILE,
-        fixedBlocks: [],
-        workSessions: [],
-        feedback: [],
-        stages: [],
-        activeSession: null,
-        // A raw value that failed to parse (corrupt, not just absent) is treated as an existing
-        // user with damaged data, not a first-timer — don't send someone who already had a plan
-        // back through onboarding just because a save got corrupted.
-        onboardingComplete: hadSavedData,
-      };
+      // Corrupt or inaccessible storage — `migrateSavedState` falls back to an empty state, and
+      // still treats this as an existing (damaged) save rather than a first-ever visit.
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time load from an external store, not a derived-state loop
-    setState(next);
+    setState(migrateSavedState(parsed, hadSavedData));
     setHydrated(true);
   }, []);
 

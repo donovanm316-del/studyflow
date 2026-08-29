@@ -15,20 +15,15 @@ import { blockMatchesWorkItem, formatDueLabel } from "@/lib/schedule-format";
 import { currentWeekRange, todayDateOnly, nowLocalIso } from "@/lib/now";
 import { getNextBestAction } from "@/lib/next-best-action";
 import { summarizeWeek } from "@/lib/decision-support";
+import { addDays } from "@/scheduling-engine";
 
 const KIND_LABEL: Record<string, string> = { assignment: "Assignment", test: "Test", quiz: "Quiz", project: "Project" };
-
-function addDaysToDateOnly(dateOnly: string, days: number): string {
-  const [y, m, d] = dateOnly.split("-").map(Number);
-  const date = new Date(y, m - 1, d + days);
-  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`;
-}
 
 export default function DashboardPage() {
   const { workItems, workSessions, stages, activeSession, startSession } = useAppData();
   const { start, end } = currentWeekRange();
   const today = todayDateOnly();
-  const todaySoonCutoff = addDaysToDateOnly(today, 1); // "due soon" = due today or tomorrow
+  const todaySoonCutoff = addDays(today, 1); // "due soon" = due today or tomorrow
   const result = useSchedule(start, end);
   const nextAction = useMemo(() => getNextBestAction(result, activeSession, nowLocalIso()), [result, activeSession]);
   const weekSummary = useMemo(() => summarizeWeek(result), [result]);

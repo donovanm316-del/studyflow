@@ -40,7 +40,14 @@ export {
   normalizeDeadline,
   minutesUntil,
   hoursUntil,
+  addDays,
+  weekdayName,
+  shortWeekdayName,
+  formatClockTime,
+  daysBetweenDateOnly,
   DEFAULT_DEADLINE_TIME,
+  DAY_NAMES,
+  SHORT_DAY_NAMES,
 } from "./date-utils";
 
 export type {

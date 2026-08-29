@@ -37,7 +37,11 @@ import {
   normalizeDeadline,
   toDateOnly,
 } from "./date-utils";
-import { calculateDeadlineCapacity, type DeadlineCapacity } from "./deadline-capacity";
+import {
+  calculateAvailableMinutesBeforeDeadline,
+  calculateDeadlineCapacity,
+  type DeadlineCapacity,
+} from "./deadline-capacity";
 import { calculateWorkloadStatus } from "./workload-status";
 import type {
   DailyForecastEntry,
@@ -399,6 +403,19 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
       ]
     : [];
 
+  // Real free time left today: usable availability from now to end of day (commitments and fixed
+  // blocks already removed by `calculateAvailableMinutesBeforeDeadline`), minus the work this pass
+  // still has ahead of the current moment.
+  const nowMinuteOfDay = minutesOfDay(now.split("T")[1] ?? "00:00");
+  const workAheadTodayMinutes = newBlocks
+    .filter((b) => b.workItemId && toDateOnly(b.start) === today && minutesOfDay(b.end.split("T")[1]) > nowMinuteOfDay)
+    .reduce((sum, b) => sum + blockDurationMinutes(b.start, b.end), 0);
+  const freeMinutesRemainingToday = Math.max(
+    0,
+    calculateAvailableMinutesBeforeDeadline(`${today}T23:59`, now, planningProfile, commitments, existingBlocks) -
+      workAheadTodayMinutes
+  );
+
   const warnings: ScheduleWarning[] = [
     ...detectOverload(schedulable, totalAvailableMinutes),
     ...hardDeadlineWarnings,
@@ -431,6 +448,7 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     decisionExplanations,
     deadlineCapacities,
     estimateAdjustments,
+    freeMinutesRemainingToday,
   };
 }
 

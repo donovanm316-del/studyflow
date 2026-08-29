@@ -351,13 +351,37 @@ describe("weekly health and week summary (Part 9/10)", () => {
 });
 
 describe("free time protection (Part 11)", () => {
-  it("reports real remaining free time today rather than filling it", () => {
+  it("reports free wall-clock time, not leftover capacity", () => {
+    // The fixture profile allows 15:00-21:00 (360 min) and NOW is 08:00, so the whole window is
+    // still ahead. With 60 minutes of work placed, 300 genuinely remain free.
+    //
+    // This deliberately does NOT match `dailyForecast.availableMinutes - workMinutes`: that figure
+    // is capped at the daily capacity *target* (135 for "moderate"), so the old formula reported
+    // 75 minutes to a student who actually had five hours of evening left.
     const item = makeAssignment({ dueDate: "2026-08-28T23:59", estimatedMinutes: 60 });
     const result = generateSchedule(buildInput([item]));
-    const free = freeMinutesToday(result, NOW);
+
+    expect(freeMinutesToday(result)).toBe(300);
 
     const todayForecast = result.dailyForecast.find((d) => d.date === "2026-08-24")!;
-    expect(free).toBe(Math.max(0, todayForecast.availableMinutes - todayForecast.workMinutes));
+    expect(freeMinutesToday(result)).toBeGreaterThan(todayForecast.availableMinutes - todayForecast.workMinutes);
+  });
+
+  it("counts only the part of the day that is still ahead", () => {
+    const item = makeAssignment({ dueDate: "2026-08-28T23:59", estimatedMinutes: 60 });
+    const morning = generateSchedule(buildInput([item]));
+    const evening = generateSchedule(buildInput([item], { now: "2026-08-24T19:00" }));
+
+    // The window is 15:00-21:00 (360 min); by 19:00 only 120 of those minutes are left.
+    // The session itself was placed at the start of the window, so by 19:00 it's in the past and
+    // no longer claims any remaining time — the whole 120 minutes are genuinely free.
+    expect(freeMinutesToday(evening)).toBeLessThan(freeMinutesToday(morning));
+    expect(freeMinutesToday(evening)).toBe(120);
+  });
+
+  it("reports no free time once the availability window has closed", () => {
+    const item = makeAssignment({ dueDate: "2026-08-28T23:59", estimatedMinutes: 60 });
+    expect(freeMinutesToday(generateSchedule(buildInput([item], { now: "2026-08-24T22:00" })))).toBe(0);
   });
 
   it("does not consume protected free time just because tolerance is high", () => {
@@ -367,7 +391,7 @@ describe("free time protection (Part 11)", () => {
     );
     // Only 60 minutes of work exists; a high tolerance must not manufacture more.
     expect(heavyTolerance.workloadStatus.estimatedRemainingMinutes).toBe(60);
-    expect(freeMinutesToday(heavyTolerance, NOW)).toBeGreaterThan(0);
+    expect(freeMinutesToday(heavyTolerance)).toBeGreaterThan(0);
   });
 });
 

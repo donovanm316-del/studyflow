@@ -4,7 +4,13 @@ import { useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { DEFAULT_DEADLINE_TIME, normalizeDeadline } from "@/scheduling-engine";
+import { DEFAULT_DEADLINE_TIME, formatClockTime, normalizeDeadline, weekdayName } from "@/scheduling-engine";
+
+/** "September 9" — the month/day half of the deadline echo. */
+function formatLongDate(dateOnly: string): string {
+  const [y, m, d] = dateOnly.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "long", day: "numeric" });
+}
 import type { NewWorkItemInput } from "@/lib/data/store";
 import type { SchedulableWorkItem } from "@/scheduling-engine";
 import type { AssignmentWeight, CourseRigor, DeadlineStrictness, WorkType } from "@/types/models";
@@ -55,6 +61,8 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
   // 11:59 PM by default — what "due Friday" means for ordinary homework. Fully editable for the
   // cases where the exact time matters (a test at 9:00 AM, an essay due at 3:00 PM).
   const [dueTime, setDueTime] = useState(initial ? toTimeInputValue(initial.dueDate) : DEFAULT_DEADLINE_TIME);
+  // Undefined on an existing item means "yes" — the Phase 4.5C behavior — so it maps to true here.
+  const [usePersonalized, setUsePersonalized] = useState(initial?.usePersonalizedEstimate !== false);
   const [preferredStartDate, setPreferredStartDate] = useState(initial?.preferredStartDate ?? "");
   const [estimatedMinutes, setEstimatedMinutes] = useState(initial?.estimatedMinutes ?? 30);
   const [weight, setWeight] = useState<AssignmentWeight>(initial?.weight ?? "medium");
@@ -95,6 +103,12 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
       deadlineStrictness,
       workType,
       rigor,
+      usePersonalizedEstimate: usePersonalized,
+      // Provenance is preserved across edits — editing a future imported item must not silently
+      // turn it into a manually-created one (Phase 4.5D, Part 13).
+      source: initial?.source,
+      externalId: initial?.externalId,
+      externalUrl: initial?.externalUrl,
     } as NewWorkItemInput);
 
     onClose();
@@ -152,6 +166,14 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
           />
         </div>
 
+        {/* The exact deadline drives most of the engine's behavior, so it's echoed back in plain
+            language rather than left implicit in two separate inputs (Phase 4.5D, Part 2). */}
+        {dueDate && (
+          <p className="-mt-2 text-xs text-ink-muted">
+            Due {weekdayName(dueDate)}, {formatLongDate(dueDate)} at {formatClockTime(dueTime || DEFAULT_DEADLINE_TIME)}
+          </p>
+        )}
+
         <Input
           label="Estimated minutes"
           type="number"
@@ -159,7 +181,25 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
           step={5}
           value={estimatedMinutes}
           onChange={(e) => setEstimatedMinutes(Number(e.target.value))}
+          hint="Your own estimate. StudyFlow keeps this even if it plans differently."
         />
+
+        <div className="flex items-start gap-2">
+          <input
+            id={`personalized-${initial?.id ?? "new"}`}
+            type="checkbox"
+            checked={usePersonalized}
+            onChange={(e) => setUsePersonalized(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-border-strong accent-brand"
+          />
+          <label htmlFor={`personalized-${initial?.id ?? "new"}`} className="text-sm text-ink">
+            Let StudyFlow adjust this from my history
+            <span className="block text-xs text-ink-muted">
+              When you&apos;ve completed enough similar work, planning can use how long it actually took. Turn this
+              off to plan with your estimate exactly as entered.
+            </span>
+          </label>
+        </div>
 
         <Input
           label="Start no earlier than (optional)"

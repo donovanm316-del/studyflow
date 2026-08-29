@@ -38,7 +38,23 @@ engine:
 | `scheduler.ts` | `generateSchedule`, `scheduleTask`, `detectOverload`, `replanRemainingSchedule` — orchestrates everything above |
 | `index.ts` | The only module the UI should import from |
 
-## Current status (Phase 2 + 2.5 + 3A + 3B + 4 + 4.5A + 4.5B + 4.5C)
+## Current status (Phase 2 + 2.5 + 3A + 3B + 4 + 4.5A + 4.5B + 4.5C + 4.5D)
+
+**Phase 4.5D — foundation lock.** Three engine-visible changes:
+
+1. `WorkItemBase.usePersonalizedEstimate` lets a student opt one item out of history-based
+   adjustment; `personalizeEstimate` returns early when it's `false`. Undefined means enabled, so
+   every existing item behaves exactly as it did in 4.5C. History still accumulates either way,
+   which is what makes the choice reversible.
+2. `GenerateScheduleResult.freeMinutesRemainingToday` reports genuinely unclaimed time — real
+   availability from *now* to end of day, minus commitments, minus work still ahead. The UI
+   previously derived this from `dailyForecast.availableMinutes`, which is capped at the daily
+   capacity *target*; subtracting work from that yields leftover **capacity**, and it told a student
+   with five hours of evening left that they had ninety minutes free.
+3. `source` / `externalId` / `externalUrl` exist on work items for a future import, and the engine
+   reads **none** of them. A scenario test asserts an imported item schedules byte-identically to a
+   manual one — that guarantee is the whole point of the field, and the boundary that would use it
+   lives in `src/lib/data/import.ts` (definitions and merge rules only; no integration).
 
 **Phase 4.5C — personalized estimates.** `estimation.ts` implements what `refineEstimate` had been
 a documented stub for since Phase 2. It is statistical, not learned: take the median

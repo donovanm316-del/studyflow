@@ -61,7 +61,37 @@ interface WorkItemBase {
    * next week, even though there'd be room to start it sooner).
    */
   preferredStartDate?: string; // ISO date ("YYYY-MM-DD")
+
+  /**
+   * Whether the student's recorded history may adjust this item's planning duration
+   * (Phase 4.5D, Part 1). Undefined means yes — that's the behavior established in Phase 4.5C, and
+   * defaulting this way keeps every existing item working exactly as before. Setting it to `false`
+   * pins planning to `estimatedMinutes`; the history itself is still recorded either way, so the
+   * choice is reversible with nothing lost.
+   */
+  usePersonalizedEstimate?: boolean;
+
+  /**
+   * Where this item came from (Phase 4.5D, Part 13). Undefined means manually entered.
+   *
+   * The scheduling engine never reads any of these three fields — provenance must not change how
+   * work is planned, only how it's displayed and how a re-import decides whether it has seen this
+   * item before. That guarantee is what lets a future importer feed the existing engine untouched;
+   * it's asserted directly in the scenario tests.
+   */
+  source?: WorkItemSource;
+  /** Stable identifier from the originating system, used to recognize an item on re-import. */
+  externalId?: string;
+  /** Link back to the item in its source system, when there is one. */
+  externalUrl?: string;
 }
+
+/**
+ * Recognized origins for a work item. `google-classroom` is declared so the import boundary and
+ * its tests can be written against a real value — no Classroom integration exists yet, and none
+ * is implemented in this phase.
+ */
+export type WorkItemSource = "manual" | "google-classroom";
 
 export type WorkItemStatus = "not-started" | "in-progress" | "completed";
 

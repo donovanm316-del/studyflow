@@ -14,16 +14,10 @@ import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
 import { blockMatchesWorkItem, changesSchedule, formatDueLabel } from "@/lib/schedule-format";
 import { todayDateOnly } from "@/lib/now";
-import { totalRemainingStageMinutes } from "@/scheduling-engine";
+import { addDays, totalRemainingStageMinutes } from "@/scheduling-engine";
 import type { SchedulableWorkItem } from "@/scheduling-engine";
 
 const KIND_LABEL: Record<string, string> = { test: "Test", quiz: "Quiz" };
-
-function addDaysToDateOnly(dateOnly: string, days: number): string {
-  const [y, m, d] = dateOnly.split("-").map(Number);
-  const date = new Date(y, m - 1, d + days);
-  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`;
-}
 
 export default function TestsPage() {
   const {
@@ -52,7 +46,7 @@ export default function TestsPage() {
     .sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
 
   const farthestDue = items.reduce((max, item) => (item.dueDate.slice(0, 10) > max ? item.dueDate.slice(0, 10) : max), today);
-  const rangeEnd = farthestDue > addDaysToDateOnly(today, 60) ? addDaysToDateOnly(today, 60) : farthestDue > today ? farthestDue : addDaysToDateOnly(today, 7);
+  const rangeEnd = farthestDue > addDays(today, 60) ? addDays(today, 60) : farthestDue > today ? farthestDue : addDays(today, 7);
   const result = useSchedule(today, rangeEnd);
 
   return (
@@ -85,7 +79,7 @@ export default function TestsPage() {
             const plannedSessionCount = result.blocks.filter(
               (b) => blockMatchesWorkItem(b, item.id, stages) && b.status === "planned"
             ).length;
-            const dueSoon = item.dueDate.slice(0, 10) <= addDaysToDateOnly(today, 1);
+            const dueSoon = item.dueDate.slice(0, 10) <= addDays(today, 1);
             const urgent = dueSoon && (item.deadlineStrictness === "hard" || item.deadlineStrictness === "important");
             return (
               <div key={item.id}>
