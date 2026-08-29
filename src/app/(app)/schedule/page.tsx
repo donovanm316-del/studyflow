@@ -6,6 +6,8 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { ScheduleBlockCard } from "@/components/schedule/ScheduleBlockCard";
 import { WorkloadForecast } from "@/components/schedule/WorkloadForecast";
 import { WorkloadStatusBadge } from "@/components/schedule/WorkloadStatusBadge";
+import { WeeklyPlanHealth } from "@/components/schedule/WeeklyPlanHealth";
+import { buildDayHealth, summarizeWeek } from "@/lib/decision-support";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAppData } from "@/lib/data/store";
@@ -50,6 +52,11 @@ export default function SchedulePage() {
       blocks: result.blocks.filter((b) => b.start.slice(0, 10) === date && b.status !== "skipped"),
     };
   });
+
+  // Both derived purely from this same `result` — the week explanation can never disagree with
+  // the day-by-day figures beside it (Phase 4.5B, Part 9/10).
+  const dayHealth = buildDayHealth(result);
+  const weekSummary = summarizeWeek(result);
 
   const alreadyGaveFeedback = feedback.some((f) => f.dateRange.start === start && f.dateRange.end === end);
 
@@ -125,6 +132,11 @@ export default function SchedulePage() {
       <section className="mb-6 rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-3 text-sm font-semibold text-ink">Workload forecast</h2>
         <WorkloadForecast forecast={result.dailyForecast} today={today} />
+      </section>
+
+      <section className="mb-6 rounded-lg border border-border bg-surface p-5">
+        <h2 className="mb-3 text-sm font-semibold text-ink">How your week looks</h2>
+        <WeeklyPlanHealth days={dayHealth} summary={weekSummary} today={today} />
       </section>
 
       {result.warnings.map((w) => (

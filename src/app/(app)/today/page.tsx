@@ -8,13 +8,22 @@ import { NextUpCard } from "@/components/schedule/NextUpCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { TimeAvailableCard } from "@/components/schedule/TimeAvailableCard";
 import { useAppData } from "@/lib/data/store";
-import { useSchedule } from "@/lib/data/useSchedule";
+import { useSchedule, useScheduleInput } from "@/lib/data/useSchedule";
 import { blockCardKind, formatTimeRange } from "@/lib/schedule-format";
 import { currentWeekRange, todayDateOnly } from "@/lib/now";
 import { nowLocalIso } from "@/lib/now";
 import { getNextBestAction } from "@/lib/next-best-action";
-import { diffSchedules, minutesOfDay, subtractIntervals, type ScheduleChangeSummary, type TimeWindow } from "@/scheduling-engine";
+import { bestUseOfTime, previewMove, type MovePreview, type TimeSuggestion } from "@/lib/decision-support";
+import {
+  diffSchedules,
+  formatMinutesAsHoursMinutes,
+  minutesOfDay,
+  subtractIntervals,
+  type ScheduleChangeSummary,
+  type TimeWindow,
+} from "@/scheduling-engine";
 import type { ScheduleBlock, WorkSession } from "@/types/models";
 
 type CompletionStep =
@@ -44,9 +53,12 @@ export default function TodayPage() {
   // legitimately start today on something due later this week — a 1-day range would only ever
   // surface work whose due date is today or already overdue.
   const { start, end } = currentWeekRange();
+  const scheduleInput = useScheduleInput(start, end);
   const result = useSchedule(start, end);
   const {
     planningProfile,
+    workItems,
+    stages,
     activeSession,
     completeBlock,
     moveBlock,
@@ -59,6 +71,10 @@ export default function TodayPage() {
 
   const [completion, setCompletion] = useState<CompletionStep | null>(null);
   const [chooserBlockId, setChooserBlockId] = useState<string | null>(null);
+  /** Engine-computed consequences of each option, held only while the chooser is open. */
+  const [previews, setPreviews] = useState<{ move: MovePreview; replan: MovePreview } | null>(null);
+  /** Title of the session just finished, so "✓ done — next up: …" can be shown (Part 14). */
+  const [justCompleted, setJustCompleted] = useState<string | null>(null);
   const [replanNotice, setReplanNotice] = useState<string | null>(null);
   const [expandedWhyId, setExpandedWhyId] = useState<string | null>(null);
   // Captures the schedule right before a replanning action; once the store update lands and
@@ -122,15 +138,32 @@ export default function TodayPage() {
     };
     setDiffBaseline(result.blocks);
     moveBlock(block, shift(block.start), shift(block.end));
-    setChooserBlockId(null);
+    closeChooser();
     setReplanNotice(`Moved "${block.title}" to tomorrow.`);
   }
 
   function doReplanRemainingToday(block: ScheduleBlock) {
     setDiffBaseline(result.blocks);
     replanRemainingToday(block);
-    setChooserBlockId(null);
+    closeChooser();
     setReplanNotice("Your remaining schedule for today has been recalculated.");
+  }
+
+  /**
+   * Opens the "what happens if I don't do this now?" chooser (Phase 4.5B, Part 5/6). Both options
+   * are previewed against the real engine here — nothing is written until the student confirms.
+   */
+  function openChooser(block: ScheduleBlock) {
+    setChooserBlockId(block.id);
+    setPreviews({
+      move: previewMove(scheduleInput, result, block, "move-to-tomorrow"),
+      replan: previewMove(scheduleInput, result, block, "replan-today"),
+    });
+  }
+
+  function closeChooser() {
+    setChooserBlockId(null);
+    setPreviews(null);
   }
 
   function beginFinish(source: CompletionStep["source"], defaultMinutes: number) {
@@ -144,12 +177,17 @@ export default function TodayPage() {
 
   function finalizeCompletion(estimateFeedback?: WorkSession["estimateFeedback"]) {
     if (!completion) return;
+    const finishedTitle =
+      completion.source.kind === "block" ? completion.source.block.title : activeSession?.workItemTitle ?? "that session";
     if (completion.source.kind === "block") {
       completeBlock(completion.source.block, completion.minutes, estimateFeedback);
     } else {
       completeAdHocSession(completion.minutes, estimateFeedback);
     }
     setCompletion(null);
+    // Surface what's next immediately rather than making the student go looking (Part 14). The
+    // actual recommendation is read from the recomputed schedule on the next render, below.
+    setJustCompleted(finishedTitle);
   }
 
   const workAhead = result.workAheadSuggestions.filter((s) => s.type === "work-ahead");
@@ -235,12 +273,41 @@ export default function TodayPage() {
         </div>
       )}
 
+      {justCompleted && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-success-soft bg-success-soft px-4 py-3 text-sm text-success">
+          <span>
+            <span aria-hidden>✓</span> &ldquo;{justCompleted}&rdquo; complete.{" "}
+            {nextAction.kind === "scheduled" ? (
+              <>
+                Next up: <span className="font-medium">{nextAction.block.title}</span> — {nextAction.minutesLabel}
+                {nextAction.dueLabel && <> · {nextAction.dueLabel}</>}
+              </>
+            ) : nextAction.kind === "no-work" ? (
+              <>{nextAction.message}</>
+            ) : null}
+          </span>
+          <button onClick={() => setJustCompleted(null)} aria-label="Dismiss" className="text-success hover:opacity-70">
+            ✕
+          </button>
+        </div>
+      )}
+
       {!activeSession &&
         (nextAction.kind === "scheduled" || (nextAction.kind === "no-work" && !showCaughtUpPanel)) && (
           <div className="mb-4">
             <NextUpCard action={nextAction} onStart={nextAction.kind === "scheduled" ? () => startSession(nextAction.block) : undefined} />
           </div>
         )}
+
+      {!activeSession && (
+        <div className="mb-4">
+          <TimeAvailableCard
+            caughtUp={result.caughtUp}
+            onFind={(minutes) => bestUseOfTime(minutes, result, workItems, stages, nowLocalIso())}
+            onStart={(suggestion: TimeSuggestion) => startSession(suggestion.block)}
+          />
+        </div>
+      )}
 
       {showCaughtUpPanel && (
         <div className="mb-4 rounded-md border border-success-soft bg-success-soft px-4 py-3 text-sm text-success">
@@ -322,7 +389,7 @@ export default function TodayPage() {
                           <Button size="sm" variant="ghost" onClick={() => beginFinish({ kind: "block", block }, plannedMinutes(block))}>
                             Log without timer
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => setChooserBlockId(isChoosing ? null : block.id)}>
+                          <Button size="sm" variant="ghost" onClick={() => (isChoosing ? closeChooser() : openChooser(block))}>
                             Can&apos;t do this today
                           </Button>
                         </div>
@@ -349,16 +416,24 @@ export default function TodayPage() {
                       )}
                     </div>
                   )}
-                  {isChoosing && (
-                    <div className="ml-2 flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border-strong bg-paper px-3 py-2">
-                      <span className="text-xs text-ink-muted">What should happen to &ldquo;{block.title}&rdquo;?</span>
-                      <Button size="sm" variant="secondary" onClick={() => moveToTomorrow(block)}>
-                        Move just this session to tomorrow
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={() => doReplanRemainingToday(block)}>
-                        Re-plan the rest of today
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setChooserBlockId(null)}>
+                  {isChoosing && previews && (
+                    <div className="ml-2 flex flex-col gap-3 rounded-md border border-dashed border-border-strong bg-paper px-3 py-3">
+                      <p className="text-xs font-medium text-ink">
+                        What happens if you don&apos;t do &ldquo;{block.title}&rdquo; now?
+                      </p>
+
+                      <MoveOption
+                        label="Move just this session to tomorrow"
+                        preview={previews.move}
+                        onConfirm={() => moveToTomorrow(block)}
+                      />
+                      <MoveOption
+                        label="Re-plan the rest of today"
+                        preview={previews.replan}
+                        onConfirm={() => doReplanRemainingToday(block)}
+                      />
+
+                      <Button size="sm" variant="ghost" className="self-start" onClick={closeChooser}>
                         Cancel
                       </Button>
                     </div>
@@ -395,6 +470,46 @@ export default function TodayPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * One option in the "what if I don't do this now?" chooser, showing the engine-computed
+ * consequence before the student commits to it (Phase 4.5B, Part 5). The student is never blocked
+ * from choosing an option — a risky outcome is stated honestly, not prevented.
+ */
+function MoveOption({ label, preview, onConfirm }: { label: string; preview: MovePreview; onConfirm: () => void }) {
+  const tone =
+    preview.verdict === "shortfall"
+      ? "text-danger"
+      : preview.verdict === "tighter"
+        ? "text-warning"
+        : "text-success";
+  const icon = preview.verdict === "shortfall" ? "▲" : preview.verdict === "tighter" ? "!" : "✓";
+
+  return (
+    <div className="rounded-md border border-border bg-surface px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className={`text-xs font-medium ${tone}`}>
+            <span aria-hidden>{icon}</span> {preview.headline}
+          </p>
+          <p className="mt-0.5 text-xs text-ink-muted">{preview.detail}</p>
+          <p className="mt-0.5 text-xs text-ink-faint">
+            Frees {formatMinutesAsHoursMinutes(preview.minutesFreedToday)} today
+            {preview.bufferBeforeMinutes != null && preview.bufferAfterMinutes != null && (
+              <>
+                {" · "}Buffer {formatMinutesAsHoursMinutes(Math.max(0, preview.bufferBeforeMinutes))} →{" "}
+                {formatMinutesAsHoursMinutes(Math.max(0, preview.bufferAfterMinutes))}
+              </>
+            )}
+          </p>
+        </div>
+        <Button size="sm" variant="secondary" onClick={onConfirm}>
+          {label}
+        </Button>
+      </div>
     </div>
   );
 }

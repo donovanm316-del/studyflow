@@ -8,6 +8,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { WorkItemModal } from "@/components/tasks/WorkItemModal";
 import { StageManager } from "@/components/tasks/StageManager";
+import { DeadlineInsight } from "@/components/tasks/DeadlineInsight";
+import { recommendStartDate, summarizeBuffer } from "@/lib/decision-support";
 import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
 import { blockMatchesWorkItem, changesSchedule, formatDueLabel } from "@/lib/schedule-format";
@@ -101,6 +103,10 @@ export default function TestsPage() {
                     item.status === "completed" ? markWorkItemIncomplete(item.id) : markWorkItemComplete(item.id)
                   }
                   onEdit={() => setEditing(item)}
+                />
+                <DeadlineInsight
+                  buffer={result.deadlineCapacities[item.id] ? summarizeBuffer(result.deadlineCapacities[item.id]) : null}
+                  startRecommendation={recommendStartDate(item, result, stages)}
                 />
                 <StageManager
                   item={item}

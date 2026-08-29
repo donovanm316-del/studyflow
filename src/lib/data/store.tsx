@@ -25,6 +25,7 @@ import {
   renumberStages,
   type SchedulableWorkItem,
 } from "@/scheduling-engine";
+import { fixedBlocksAfterMove, fixedBlocksAfterReplanToday } from "@/lib/schedule-mutations";
 
 const STORAGE_KEY = "studyflow.appData.v1";
 
@@ -443,18 +444,15 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const moveBlock = useCallback((block: ScheduleBlock, newStart: string, newEnd: string) => {
     setState((s) => ({
       ...s,
-      fixedBlocks: [
-        ...s.fixedBlocks,
-        // Fresh id for the same reason as completeBlock/skipBlock — the moved block now lives at
-        // a different date/time, but its old deterministic id remains available for the engine to
-        // reuse on a future regeneration of the same item's original slot.
-        { ...block, id: newId("moved"), start: newStart, end: newEnd, origin: "manual-override", status: "planned" },
-      ],
+      // Fresh id for the same reason as completeBlock/skipBlock — the moved block now lives at a
+      // different date/time, but its old deterministic id remains available for the engine to
+      // reuse on a future regeneration of the same item's original slot. The transformation itself
+      // is shared with the "what if I move this?" preview so the two can never disagree.
+      fixedBlocks: fixedBlocksAfterMove(s.fixedBlocks, block, newStart, newEnd, newId("moved")),
     }));
   }, []);
 
   const replanRemainingToday = useCallback((block: ScheduleBlock) => {
-    const dateOnly = block.start.slice(0, 10);
     setState((s) => {
       const session: WorkSession | null = block.workItemId
         ? {
@@ -468,14 +466,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
             postponed: true,
           }
         : null;
-      // Release any other manually-pinned blocks today too, so the rest of the day is free to
-      // reflow around the change rather than staying locked into slots planned before it.
-      const releasedFixedBlocks = s.fixedBlocks.filter(
-        (b) => !(b.origin === "manual-override" && b.status === "planned" && b.start.slice(0, 10) === dateOnly && b.id !== block.id)
-      );
       return {
         ...s,
-        fixedBlocks: [...releasedFixedBlocks, { ...block, id: newId("skipped"), status: "skipped" }],
+        // Shared with the "what if I re-plan today?" preview — see schedule-mutations.ts.
+        fixedBlocks: fixedBlocksAfterReplanToday(s.fixedBlocks, block, newId("skipped")),
         workSessions: session ? [...s.workSessions, session] : s.workSessions,
         activeSession: s.activeSession?.blockId === block.id ? null : s.activeSession,
       };

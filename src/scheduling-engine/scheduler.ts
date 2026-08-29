@@ -315,19 +315,34 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
     newSessionCountByItem.set(block.workItemId, (newSessionCountByItem.get(block.workItemId) ?? 0) + 1);
   }
   // How much usable time genuinely remains before each item's exact deadline (Phase 4.5A, Part
-  // 7/8). Measured against `existingBlocks` rather than the blocks just placed: this answers "is
-  // there room for this work?", so counting the sessions the engine reserved *for that very work*
-  // as unavailable would make every scheduled item look like it had no time left.
+  // 7/8), and whether the work still fits.
+  //
+  // Two deliberate choices make this answer the question a student actually asks — "will I make
+  // this deadline?" — rather than a bookkeeping question:
+  //
+  //  1. Work remaining is `estimated - actual`: what's still to be *done*. Scheduling or pinning a
+  //     session doesn't reduce it, because the student hasn't done it yet. (The placement pass
+  //     above uses a different figure, `remainingOf`, which nets off pinned minutes precisely so it
+  //     doesn't schedule the same work twice — that's the right measure there and the wrong one here.)
+  //  2. Available time excludes commitments and *other* items' blocks, but not this item's own —
+  //     time already reserved for this very work is time available to it. Counting it as busy would
+  //     make every scheduled item look starved.
+  //
+  // Together these mean moving a session *within* the window leaves the buffer unchanged, while
+  // moving it past the deadline genuinely reduces it — which is what makes the "what if I move
+  // this?" preview trustworthy.
   const deadlineCapacities: Record<string, DeadlineCapacity> = {};
-  for (const { item, remainingMinutes } of schedulable) {
+  for (const item of inRange) {
+    const workLeft = Math.max(0, item.estimatedMinutes - (item.actualMinutes ?? 0));
+    const otherItemsBlocks = existingBlocks.filter((b) => b.workItemId !== item.id);
     const capacity = calculateDeadlineCapacity(
       item.id,
       item.dueDate,
-      remainingMinutes,
+      workLeft,
       now,
       planningProfile,
       commitments,
-      existingBlocks,
+      otherItemsBlocks,
       { dailyCapacityMinutes, preferredStartDate: item.preferredStartDate }
     );
     deadlineCapacities[item.id] = capacity;

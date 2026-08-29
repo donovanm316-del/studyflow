@@ -37,7 +37,22 @@ engine:
 | `scheduler.ts` | `generateSchedule`, `scheduleTask`, `detectOverload`, `replanRemainingSchedule` — orchestrates everything above |
 | `index.ts` | The only module the UI should import from |
 
-## Current status (Phase 2 + 2.5 + 3A + 3B + 4 + 4.5A)
+## Current status (Phase 2 + 2.5 + 3A + 3B + 4 + 4.5A + 4.5B)
+
+**Phase 4.5B — decision support (lives in `src/lib/decision-support.ts`, not here).** Everything
+that answers "what should I do now / what if I don't / what fits in 30 minutes / is my week
+manageable" either reads a `GenerateScheduleResult` this engine already produced, or re-runs
+`generateSchedule` over a hypothetical, never-persisted copy of its inputs. There is still exactly
+one scheduler. The "what if I move this?" preview shares its block-list transformation with the
+store via `src/lib/schedule-mutations.ts`, so the preview and the real action cannot drift apart.
+
+One engine change came out of it: `deadlineCapacities` now measures **work still to be done**
+(`estimated - actual`) against usable time before the deadline, excluding commitments and *other*
+items' blocks but not the item's own. Previously it reused the placement pass's `remainingOf`,
+which nets off minutes already pinned to a manual override — correct for deciding what still needs
+placing, but wrong for "will I make this deadline?", because pinning a session made the work appear
+to shrink and the buffer to *grow*. Capacities are now also computed for every in-range item rather
+than only those with unplaced work, so a fully-pinned item still reports a real deadline picture.
 
 **Phase 4.5A additions — exact deadline times.** Deadlines are full `YYYY-MM-DDTHH:mm` timestamps
 end to end. `normalizeDeadline` coerces any legacy date-only value to 11:59 PM that day (the end of
@@ -144,8 +159,11 @@ for this module — see Part 24 of the Phase 2 spec.
 - Deadlines are interpreted in the browser's local time with no timezone model (Phase 4.5A) —
   consistent for one student on one device, but a deadline does not travel across timezones.
 - `deadlineCapacities` measures available time against the blocks that existed *before* this
-  placement pass, so it answers "is there room for this work?" rather than "is there room left
-  after scheduling it?" — the two would otherwise make every scheduled item look starved.
+  placement pass, and excludes the item's own blocks, so it answers "is there room for this work?"
+  rather than "is there room left after scheduling it?" — the two would otherwise make every
+  scheduled item look starved. A consequence: capacity alone cannot see a session pinned *past* its
+  own deadline (the time before the deadline is unchanged), so `previewMove` additionally compares
+  work needed against minutes the engine actually placed before the deadline.
 - A decomposed item only ever contributes its *active* stage's minutes to demand/capacity/forecast
   numbers — later stages in the chain aren't reserved for in advance. This matches the spec's
   worked examples (complete a stage → the next one becomes schedulable on the next call) but means

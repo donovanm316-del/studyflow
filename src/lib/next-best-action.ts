@@ -7,6 +7,8 @@
  */
 import { blockDurationMinutes, formatMinutesAsHoursMinutes, minutesOfDay, toDateOnly } from "@/scheduling-engine";
 import type { GenerateScheduleResult, WorkAheadSuggestion } from "@/scheduling-engine";
+import { buildWhyNow, freeMinutesToday, summarizeBuffer, type BufferSummary } from "@/lib/decision-support";
+import { formatDueLabel } from "@/lib/schedule-format";
 import type { ActiveWorkSession, ScheduleBlock } from "@/types/models";
 
 export type NextBestAction =
@@ -18,8 +20,13 @@ export type NextBestAction =
       primaryReason?: string;
       reasonBullets: string[];
       after: { title: string; minutesLabel: string } | null;
+      /** Deadline context for the recommended work, when the engine computed it (Phase 4.5B). */
+      dueLabel: string | null;
+      buffer: BufferSummary | null;
+      /** Present-tense "why this, now" reasons — see `buildWhyNow`. */
+      whyNow: string[];
     }
-  | { kind: "no-work"; message: string; optional: WorkAheadSuggestion[] };
+  | { kind: "no-work"; message: string; optional: WorkAheadSuggestion[]; freeMinutes: number };
 
 function isWorkBlock(block: ScheduleBlock): boolean {
   return (block.origin === "generated" || block.origin === "manual-override") && block.status === "planned" && !!block.workItemId;
@@ -67,11 +74,14 @@ export function getNextBestAction(
       kind: "no-work",
       message: result.caughtUp ? "You're caught up." : "Nothing else is scheduled today.",
       optional: result.caughtUp ? result.workAheadSuggestions : [],
+      // Free time is a real, protected outcome worth naming — not empty space to fill (Part 11).
+      freeMinutes: freeMinutesToday(result, nowIso),
     };
   }
 
   const afterBlock = candidates[1];
   const explanation = next.workItemId ? result.decisionExplanations[next.workItemId] : undefined;
+  const capacity = next.workItemId ? result.deadlineCapacities[next.workItemId] : undefined;
 
   return {
     kind: "scheduled",
@@ -82,5 +92,8 @@ export function getNextBestAction(
     after: afterBlock
       ? { title: afterBlock.title, minutesLabel: formatMinutesAsHoursMinutes(blockDurationMinutes(afterBlock.start, afterBlock.end)) }
       : null,
+    dueLabel: capacity ? formatDueLabel(capacity.deadline, today) : null,
+    buffer: capacity ? summarizeBuffer(capacity) : null,
+    whyNow: buildWhyNow(next, result, nowIso),
   };
 }

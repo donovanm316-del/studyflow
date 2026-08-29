@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { formatMinutesAsHoursMinutes } from "@/scheduling-engine";
 import type { NextBestAction } from "@/lib/next-best-action";
 
 export interface NextUpCardProps {
@@ -13,9 +14,9 @@ export interface NextUpCardProps {
 }
 
 /**
- * The single "what should I do next" panel shared by Dashboard and Today (Phase 4, Part 15/16/22).
- * Presentation-only: the caller decides what "Start" does and whether it's currently allowed
- * (e.g. disabled while another session is already active).
+ * "Your next move" — the single decision-support panel shared by Dashboard and Today (Phase 4,
+ * Part 22; upgraded in Phase 4.5B, Part 1/2). Presentation-only: the caller decides what "Start"
+ * does and whether it's currently allowed.
  */
 export function NextUpCard({ action, onStart, startDisabled, compact }: NextUpCardProps) {
   const [showWhy, setShowWhy] = useState(false);
@@ -25,47 +26,63 @@ export function NextUpCard({ action, onStart, startDisabled, compact }: NextUpCa
   if (action.kind === "no-work") {
     return (
       <div className="rounded-lg border border-border bg-surface p-4">
-        <p className="text-sm text-ink-muted">{action.message}</p>
-        {action.optional.length > 0 && (
-          <p className="mt-1 text-xs text-ink-faint">{action.optional[0].reason}</p>
+        <p className="text-sm font-medium text-ink">{action.message}</p>
+        {action.freeMinutes > 0 && (
+          <p className="mt-1 text-sm text-ink-muted">
+            You have about {formatMinutesAsHoursMinutes(action.freeMinutes)} of free time left today.
+          </p>
         )}
+        {action.optional.length > 0 && <p className="mt-1 text-xs text-ink-faint">{action.optional[0].reason}</p>}
       </div>
     );
   }
 
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Next up</p>
-      <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
-        <div>
+      <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Your next move</p>
+
+      <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-sm font-medium text-ink">{action.block.title}</p>
-          <p className="text-xs text-ink-muted">{action.minutesLabel}</p>
+          <p className="text-xs text-ink-muted">
+            {action.minutesLabel}
+            {action.dueLabel && <> · {action.dueLabel}</>}
+          </p>
         </div>
         {onStart && (
           <Button size="sm" disabled={startDisabled} onClick={onStart}>
-            Start
+            Start session
           </Button>
         )}
       </div>
+
+      {action.buffer && action.buffer.capacity.estimatedMinutes > 0 && (
+        <p className="mt-2 text-xs text-ink-muted">
+          <span aria-hidden>{action.buffer.icon}</span>{" "}
+          <span className="font-medium text-ink">{action.buffer.label}</span> — {action.buffer.sentence}
+        </p>
+      )}
+
       {!compact && action.after && (
         <p className="mt-2 text-xs text-ink-faint">
           After this: {action.after.title} — {action.after.minutesLabel}
         </p>
       )}
-      {!compact && action.reasonBullets.length > 0 && (
+
+      {!compact && action.whyNow.length > 0 && (
         <div className="mt-2">
           <button
             onClick={() => setShowWhy(!showWhy)}
             aria-expanded={showWhy}
             className="text-xs text-ink-muted underline-offset-2 hover:text-ink hover:underline"
           >
-            {showWhy ? "Hide reason" : "What should I work on?"}
+            {showWhy ? "Hide reason" : "Why now?"}
           </button>
           {showWhy && (
             <ul className="mt-1 flex flex-col gap-0.5 rounded-md border border-dashed border-border-strong bg-paper px-3 py-2">
-              {action.reasonBullets.map((bullet, i) => (
+              {action.whyNow.map((reason, i) => (
                 <li key={i} className="text-xs text-ink-muted">
-                  • {bullet}
+                  • {reason}
                 </li>
               ))}
             </ul>

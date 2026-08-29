@@ -14,6 +14,7 @@ import { useSchedule } from "@/lib/data/useSchedule";
 import { blockMatchesWorkItem, formatDueLabel } from "@/lib/schedule-format";
 import { currentWeekRange, todayDateOnly, nowLocalIso } from "@/lib/now";
 import { getNextBestAction } from "@/lib/next-best-action";
+import { summarizeWeek } from "@/lib/decision-support";
 
 const KIND_LABEL: Record<string, string> = { assignment: "Assignment", test: "Test", quiz: "Quiz", project: "Project" };
 
@@ -30,6 +31,7 @@ export default function DashboardPage() {
   const todaySoonCutoff = addDaysToDateOnly(today, 1); // "due soon" = due today or tomorrow
   const result = useSchedule(start, end);
   const nextAction = useMemo(() => getNextBestAction(result, activeSession, nowLocalIso()), [result, activeSession]);
+  const weekSummary = useMemo(() => summarizeWeek(result), [result]);
 
   const dueThisWeek = workItems.filter((item) => item.dueDate.slice(0, 10) >= start && item.dueDate.slice(0, 10) <= end);
   const completedThisWeek = dueThisWeek.filter((item) => item.status === "completed").length;
@@ -68,6 +70,11 @@ export default function DashboardPage() {
       <div className="mb-6">
         <WorkloadStatusBadge status={result.workloadStatus} />
       </div>
+
+      <section className="mb-6 rounded-lg border border-border bg-surface p-4">
+        <p className="text-sm font-medium text-ink">{weekSummary.headline}</p>
+        <p className="mt-1 text-sm text-ink-muted">{weekSummary.detail}</p>
+      </section>
 
       {!activeSession && nextAction.kind === "scheduled" && (
         <div className="mb-6">
