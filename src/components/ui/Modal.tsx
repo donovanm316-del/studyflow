@@ -34,17 +34,24 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
       onClick={onClose}
       role="presentation"
     >
+      {/*
+        The dialog is capped to the viewport and scrolls internally. Without this, a form taller
+        than the screen is clipped at *both* ends by the centering above — on a phone that hid the
+        work item form's own Save/Cancel buttons entirely, making it impossible to submit.
+        `dvh` rather than `vh` so mobile browser chrome collapsing doesn't re-clip it.
+      */}
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          "w-full max-w-md rounded-lg border border-border bg-surface p-6 shadow-lg",
+          "flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col rounded-lg border border-border bg-surface shadow-lg",
           className
         )}
       >
-        <div className="mb-4 flex items-center justify-between">
+        {/* Header stays put while the body scrolls, so the close button is always reachable. */}
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
           <h2 id="modal-title" className="text-base font-semibold text-ink">
             {title}
           </h2>
@@ -56,7 +63,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
             ✕
           </button>
         </div>
-        {children}
+        <div className="overflow-y-auto px-6 py-5">{children}</div>
       </div>
     </div>
   );
