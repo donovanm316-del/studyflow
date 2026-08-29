@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS } from "./nav-items";
+import { Logo } from "./Logo";
 
 export function MobileNav() {
   const pathname = usePathname();
@@ -13,7 +14,8 @@ export function MobileNav() {
   return (
     <div className="border-b border-border bg-surface md:hidden">
       <div className="flex h-14 items-center justify-between px-4">
-        <Link href="/dashboard" className="text-sm font-semibold tracking-tight text-ink">
+        <Link href="/dashboard" className="flex items-center gap-2 text-sm font-semibold tracking-tight text-ink">
+          <Logo className="h-6 w-6 rounded-md" />
           StudyFlow
         </Link>
         <button

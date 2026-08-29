@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
+import { Logo } from "@/components/layout/Logo";
 
 const FEATURES = [
   {
@@ -24,7 +25,10 @@ export default function LandingPage() {
     <div className="flex min-h-full flex-col">
       <header className="border-b border-border">
         <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between px-6">
-          <span className="text-sm font-semibold tracking-tight text-ink">StudyFlow</span>
+          <span className="flex items-center gap-2 text-sm font-semibold tracking-tight text-ink">
+            <Logo className="h-7 w-7 rounded-lg" />
+            StudyFlow
+          </span>
           <div className="flex items-center gap-2">
             <Link href="/login">
               <Button variant="ghost" size="sm">Log in</Button>

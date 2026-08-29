@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS } from "./nav-items";
+import { Logo } from "./Logo";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -11,7 +12,8 @@ export function Sidebar() {
   return (
     <aside className="hidden w-56 shrink-0 border-r border-border bg-surface md:flex md:flex-col">
       <div className="flex h-14 items-center border-b border-border px-5">
-        <Link href="/dashboard" className="text-sm font-semibold tracking-tight text-ink">
+        <Link href="/dashboard" className="flex items-center gap-2 text-sm font-semibold tracking-tight text-ink">
+          <Logo className="h-6 w-6 rounded-md" />
           StudyFlow
         </Link>
       </div>
