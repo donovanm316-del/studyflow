@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { generateSchedule } from "@/scheduling-engine";
 import { migrateSavedState } from "@/lib/data/migrate";
+import { normalizeExternalItem } from "@/lib/data/import";
 import { makeAssignment, makePlanningProfile, NOW } from "@/scheduling-engine/__tests__/fixtures";
 
 /**
@@ -184,5 +185,66 @@ describe("StudyFlow without a Google connection", () => {
 
     expect(result.blocks.length).toBeGreaterThan(0);
     expect(result.unscheduledWorkItemIds).toEqual([]);
+  });
+
+  it("loads a Phase 5A save that predates course selection", () => {
+    const state = migrateSavedState({ workItems: [], onboardingComplete: true }, true);
+    // Empty reads as "all active courses" — the same thing a newly-connected student gets.
+    expect(state.classroomCourseIds).toEqual([]);
+    expect(state.classroomLastSyncAt).toBeUndefined();
+  });
+
+  it("survives a damaged course selection without losing the student's work", () => {
+    const state = migrateSavedState(
+      { workItems: [], classroomCourseIds: "not-an-array", classroomLastSyncAt: 42 },
+      true
+    );
+    expect(state.classroomCourseIds).toEqual([]);
+    expect(state.classroomLastSyncAt).toBeUndefined();
+  });
+});
+
+describe("data safety", () => {
+  it("fabricates no session history for imported work", () => {
+    // An assignment that arrived from Classroom this morning has no past. Inventing sessions would
+    // corrupt Insights and the personalized-estimate history in one stroke (Part 26).
+    const input = normalizeExternalItem(
+      { source: "google-classroom", externalId: "cw-1", externalCourseId: "c1", title: "Reading", dueDate: "2026-09-04T15:00" },
+      "2026-08-24"
+    )!;
+
+    const record = input as unknown as Record<string, unknown>;
+    expect(record.actualMinutes).toBeUndefined();
+    expect(record.status).toBeUndefined(); // the store sets "not-started"; nothing is pre-filled here
+    expect(migrateSavedState({ workItems: [{ ...input, id: "i1" }] }, true).workSessions).toEqual([]);
+  });
+
+  it("writes no Google token or credential into the persisted app state", () => {
+    // The refresh token lives in an encrypted httpOnly cookie. Nothing about the connection is
+    // allowed to reach the localStorage blob.
+    const state = migrateSavedState({ workItems: [], classroomCourseIds: ["c1"], classroomLastSyncAt: "2026-08-30T12:00:00.000Z" }, true);
+    const serialized = JSON.stringify(state);
+    expect(serialized).not.toMatch(/refreshToken|accessToken|client_secret|ya29|1\/\//);
+  });
+
+  it("keeps the sync-tracking fields to the minimum reconciliation needs", () => {
+    // Part 29: a comparison baseline, not a cached copy of the API response. Descriptions,
+    // instructions, and raw Google payloads are deliberately not persisted onto the work item.
+    const input = normalizeExternalItem(
+      {
+        source: "google-classroom",
+        externalId: "cw-1",
+        externalCourseId: "c1",
+        title: "Reading",
+        dueDate: "2026-09-04T15:00",
+        courseName: "AP Biology",
+        description: "A long set of instructions that StudyFlow has no reason to keep a copy of.",
+        sourceUpdatedAt: "2026-08-30T12:00:00.000Z",
+      },
+      "2026-08-24"
+    )!;
+
+    expect(Object.keys(input.sourceSnapshot!).sort()).toEqual(["courseName", "dueDate", "title"]);
+    expect(JSON.stringify(input)).not.toContain("no reason to keep");
   });
 });

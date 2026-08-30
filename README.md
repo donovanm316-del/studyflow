@@ -41,6 +41,8 @@ npm run build     # production build
   by median ratio; statistical, not learned, and switchable off per item
 - **Insights** — per-subject accuracy and workload patterns drawn from recorded history
 - **Replanning** — a schedule that adapts when a day goes sideways, with the changes explained
+- **Google Classroom import** — read-only, reviewed before anything is written, and never a source
+  of invented estimates or deadlines
 
 ## Architecture
 
@@ -68,14 +70,23 @@ own. `src/scheduling-engine/README.md` describes how it works.
 
 ## Google Classroom
 
-StudyFlow can connect to Google Classroom to read a student's class list, read-only. The connection
-needs Google Cloud credentials that aren't part of this repository, and **the app runs normally
-without them** — Settings simply reports that Google Classroom isn't set up.
+StudyFlow can connect to Google Classroom, read-only, and import coursework into the planner. The
+student picks which classes to sync and reviews everything before anything is written — new work,
+teacher-side changes, and items with no deadline are shown separately, and each one is opt-in.
+Imported assignments become ordinary StudyFlow work items and go through the same scheduling engine
+as everything else.
 
-Setup instructions, the OAuth scopes requested and why, and how credentials are handled:
+**StudyFlow never modifies Google Classroom.** It cannot create, edit, submit, turn in, or delete
+anything there, and marking work complete in StudyFlow does not touch Classroom.
+
+It also refuses to guess: Classroom doesn't say how long an assignment takes or what kind of work it
+is, so StudyFlow asks rather than inventing an estimate or classifying an assignment as a test.
+
+The connection needs Google Cloud credentials that aren't part of this repository, and **the app
+runs normally without them** — Settings simply reports that Google Classroom isn't set up.
+
+Setup, scopes and why each is requested, deadline handling, duplicate detection, and sync behavior:
 [`docs/google-classroom-setup.md`](docs/google-classroom-setup.md).
-
-Importing assignments from Classroom is not built yet.
 
 ## Deployment
 

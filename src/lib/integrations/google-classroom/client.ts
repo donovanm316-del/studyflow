@@ -8,10 +8,11 @@
  * StudyFlow that issues a POST, PATCH, or DELETE to Classroom, so no Classroom coursework can be
  * created, modified, submitted, or deleted by this app.
  */
+import type { ExternalWorkItem } from "@/lib/data/import";
 import { ClassroomError, codeForHttpStatus } from "./errors";
-import { normalizeCourses } from "./normalize";
+import { normalizeCourses, normalizeCourseWorkList, type CourseContext } from "./normalize";
 import type { FetchLike } from "./oauth";
-import type { ExternalCourse, GoogleListCoursesResponse } from "./types";
+import type { ExternalCourse, GoogleListCourseWorkResponse, GoogleListCoursesResponse } from "./types";
 
 const COURSES_ENDPOINT = "https://classroom.googleapis.com/v1/courses";
 
@@ -82,4 +83,44 @@ export async function listCourses(accessToken: string, options: ListCoursesOptio
   }
 
   throw new ClassroomError("unknown", `classroom pagination exceeded ${MAX_PAGES} pages`);
+}
+
+export interface ListCourseWorkOptions extends ListCoursesOptions {
+  /** Course name/section, folded into each item so the caller doesn't have to re-join them. */
+  course?: CourseContext;
+}
+
+/**
+ * All coursework in one course.
+ *
+ * Read-only, like everything else in this file: a GET with a bearer token and no request body.
+ * Nothing StudyFlow does can create, modify, submit, or delete Classroom coursework.
+ *
+ * Google returns coursework in no guaranteed order and does not filter by due date, so this fetches
+ * the course's full list and lets reconciliation decide what matters. A course with no coursework
+ * comes back as `{}` with no `courseWork` key at all — an empty list, not an error.
+ */
+export async function listCourseWork(
+  accessToken: string,
+  courseId: string,
+  options: ListCourseWorkOptions = {}
+): Promise<ExternalWorkItem[]> {
+  const { fetchImpl = fetch, endpoint = COURSES_ENDPOINT, course = {} } = options;
+
+  const items: ExternalWorkItem[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({ pageSize: String(PAGE_SIZE) });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const url = `${endpoint}/${encodeURIComponent(courseId)}/courseWork?${params.toString()}`;
+    const body = await getJson<GoogleListCourseWorkResponse>(url, accessToken, fetchImpl);
+    items.push(...normalizeCourseWorkList(body.courseWork ?? [], course));
+
+    pageToken = body.nextPageToken || undefined;
+    if (!pageToken) return items;
+  }
+
+  throw new ClassroomError("unknown", `coursework pagination exceeded ${MAX_PAGES} pages`);
 }

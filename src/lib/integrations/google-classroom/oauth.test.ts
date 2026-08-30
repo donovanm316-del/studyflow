@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildAuthorizationUrl, exchangeCodeForTokens, refreshAccessToken, revokeToken } from "./oauth";
 import { ClassroomError } from "./errors";
-import { CLASSROOM_COURSES_READONLY_SCOPE, type GoogleConfig } from "./config";
+import { CLASSROOM_COURSES_READONLY_SCOPE, CLASSROOM_COURSEWORK_READONLY_SCOPE, type GoogleConfig } from "./config";
 
 const CONFIG: GoogleConfig = {
   clientId: "test-client-id.apps.googleusercontent.com",
@@ -26,8 +26,11 @@ describe("authorization URL", () => {
     expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
   });
 
-  it("requests only the read-only courses scope", () => {
-    expect(url.searchParams.get("scope")).toBe(CLASSROOM_COURSES_READONLY_SCOPE);
+  it("requests exactly the two read-only scopes the app uses", () => {
+    expect(url.searchParams.get("scope")?.split(" ")).toEqual([
+      CLASSROOM_COURSES_READONLY_SCOPE,
+      CLASSROOM_COURSEWORK_READONLY_SCOPE,
+    ]);
   });
 
   it("never puts the client secret in a URL the browser will hold", () => {

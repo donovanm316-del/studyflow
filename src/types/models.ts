@@ -91,6 +91,37 @@ interface WorkItemBase {
   externalCourseId?: string;
   /** Link back to the item in its source system, when there is one. */
   externalUrl?: string;
+  /** When the source system last modified this item, verbatim from the provider (Phase 5B). */
+  sourceUpdatedAt?: string;
+  /**
+   * The last-known state of the fields the source owns (Phase 5B).
+   *
+   * This is what makes "did the teacher change something?" answerable without accusing the student
+   * of it. Comparing incoming Classroom data against the item's *live* values would report the
+   * student's own edits as source changes; comparing against this reports only what actually moved
+   * upstream. Kept to three fields on purpose — it is a comparison baseline, not a cached copy of
+   * the API response.
+   */
+  sourceSnapshot?: SourceSnapshot;
+
+  /**
+   * True when nobody has actually estimated this item yet (Phase 5B).
+   *
+   * Imported work arrives with a placeholder duration because the scheduler needs a number, but
+   * Google Classroom does not say how long anything takes and StudyFlow refuses to guess. This flag
+   * is what separates "30 minutes because the student said so" from "30 minutes because we had to
+   * put something there", so the UI can ask rather than assert. Cleared the moment a real estimate
+   * is supplied. Undefined on every manually-created item, which by definition has a real estimate.
+   */
+  needsEstimate?: boolean;
+}
+
+/** The subset of a work item that an external source owns and can legitimately change. */
+export interface SourceSnapshot {
+  title: string;
+  /** Absent when the source has no deadline for this item. */
+  dueDate?: string;
+  courseName?: string;
 }
 
 /**

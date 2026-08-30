@@ -53,6 +53,17 @@ export interface AppState {
    * redirect. Existing users are never sent back through onboarding.
    */
   onboardingComplete: boolean;
+  /**
+   * Which Google Classroom courses the student chose to sync (Phase 5B). Empty means "all active
+   * courses", which is where a student starts before narrowing anything down.
+   *
+   * A planning preference, so it lives with the student's data rather than in the connection
+   * cookie: it should survive disconnecting and reconnecting, and it is nobody's business but
+   * theirs.
+   */
+  classroomCourseIds: string[];
+  /** When coursework was last retrieved. Absent until a sync has actually run. */
+  classroomLastSyncAt?: string;
 }
 
 export function emptyState(onboardingComplete: boolean): AppState {
@@ -66,6 +77,7 @@ export function emptyState(onboardingComplete: boolean): AppState {
     stages: [],
     activeSession: null,
     onboardingComplete,
+    classroomCourseIds: [],
   };
 }
 
@@ -110,5 +122,9 @@ export function migrateSavedState(parsed: unknown, hadSavedData: boolean): AppSt
     activeSession: isRecord(parsed.activeSession) ? (parsed.activeSession as unknown as ActiveWorkSession) : null,
     // Any successfully-loaded save, including one predating this field, is an existing user.
     onboardingComplete: typeof parsed.onboardingComplete === "boolean" ? parsed.onboardingComplete : true,
+    // Pre-Phase-5B saves have no course selection — an empty list reads as "all active courses",
+    // which is the same thing a newly-connected student gets.
+    classroomCourseIds: asArray<string>(parsed.classroomCourseIds).filter((id) => typeof id === "string"),
+    classroomLastSyncAt: typeof parsed.classroomLastSyncAt === "string" ? parsed.classroomLastSyncAt : undefined,
   };
 }

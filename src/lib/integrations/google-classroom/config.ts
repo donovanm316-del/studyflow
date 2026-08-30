@@ -13,30 +13,33 @@
 /**
  * The scopes StudyFlow requests, and why each one is here.
  *
- * Phase 5A retrieves the student's list of classes and nothing else, so it requests exactly the
- * scope that permits that and no other. `classroom.coursework.me.readonly` — which Phase 5B will
- * need to read assignments — is deliberately *not* requested yet: asking for a permission before
- * any code uses it is precisely the over-broad grant that OAuth review exists to catch.
+ * Both are read-only, and both are used by code that exists. Phase 5A requested only the first,
+ * because that phase read only the class list; Phase 5B reads coursework, so it adds the second and
+ * nothing else. The rule has not changed — the app holds no permission no code uses.
  *
- * The authorization request sets `include_granted_scopes=true`, which is Google's incremental
- * authorization mechanism. When Phase 5B adds the coursework scope, the student is asked only for
- * the new permission and the existing grant is carried forward, so starting narrow costs nothing
- * later.
+ * `include_granted_scopes=true` on the authorization request is Google's incremental authorization
+ * mechanism, so a student connected under Phase 5A is asked for the coursework permission alone
+ * rather than re-consenting to everything.
  *
- * Explicitly rejected for this app: `classroom.courses` (write access — Phase 5A is read-only),
- * and every `.students`, `.rosters`, and `.announcements` scope, which grant a view of *other*
- * people's data and exist for teacher and administrator tools. StudyFlow is a student's planner.
+ * Explicitly rejected for this app:
+ *  - `classroom.courses` and `classroom.coursework.me` (the non-`.readonly` forms) — those grant
+ *    write access. StudyFlow is read-only toward Classroom and has no code that could submit,
+ *    create, edit, or delete coursework.
+ *  - `classroom.coursework.students*`, `classroom.rosters`, `classroom.announcements`,
+ *    `classroom.profile.emails` — these expose *other people's* data and exist for teacher and
+ *    administrator tools. StudyFlow is a student's planner.
+ *  - `classroom.student-submissions.me.readonly` — this would reveal whether the student has turned
+ *    work in. It is not requested, and the consequence is documented rather than worked around:
+ *    StudyFlow's own completion status is what governs planning, and Classroom submission state is
+ *    never read. See `docs/google-classroom-setup.md`.
  */
 export const CLASSROOM_COURSES_READONLY_SCOPE = "https://www.googleapis.com/auth/classroom.courses.readonly";
 
-/**
- * Reserved for Phase 5B. Declared here so the decision is recorded in code rather than rediscovered,
- * but not included in `REQUESTED_SCOPES` and therefore never requested.
- */
+/** Read the signed-in student's own coursework. Added in Phase 5B, when code began reading it. */
 export const CLASSROOM_COURSEWORK_READONLY_SCOPE =
   "https://www.googleapis.com/auth/classroom.coursework.me.readonly";
 
-export const REQUESTED_SCOPES = [CLASSROOM_COURSES_READONLY_SCOPE] as const;
+export const REQUESTED_SCOPES = [CLASSROOM_COURSES_READONLY_SCOPE, CLASSROOM_COURSEWORK_READONLY_SCOPE] as const;
 
 export interface GoogleConfig {
   clientId: string;

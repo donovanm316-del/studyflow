@@ -80,21 +80,29 @@ describe("configuration detection", () => {
 });
 
 describe("requested OAuth scopes", () => {
-  it("requests read-only course access and nothing else", () => {
-    expect([...REQUESTED_SCOPES]).toEqual([CLASSROOM_COURSES_READONLY_SCOPE]);
+  it("requests read-only courses and read-only coursework, and nothing else", () => {
+    // Both are used by code that exists: courses for the class list, coursework for the import.
+    expect([...REQUESTED_SCOPES]).toEqual([CLASSROOM_COURSES_READONLY_SCOPE, CLASSROOM_COURSEWORK_READONLY_SCOPE]);
   });
 
-  it("does not request the coursework scope until Phase 5B actually reads coursework", () => {
-    // Declared as a constant so the decision is recorded, but deliberately not requested — the
-    // app holds no permission it doesn't use.
-    expect([...REQUESTED_SCOPES]).not.toContain(CLASSROOM_COURSEWORK_READONLY_SCOPE);
+  it("requests only the student's own coursework, never other students'", () => {
+    expect(CLASSROOM_COURSEWORK_READONLY_SCOPE).toContain("coursework.me");
   });
 
-  it("requests no write, teacher, roster, or other-student scope", () => {
-    const forbidden = [".students", ".rosters", "announcements", "profile.emails"];
+  it("requests no write, teacher, roster, submission, or identity scope", () => {
+    // `.students` covers the teacher-facing coursework and submission scopes; `student-submissions`
+    // would reveal turn-in state, which StudyFlow deliberately does not read.
+    const forbidden = [".students", ".rosters", "announcements", "profile.emails", "student-submissions"];
     for (const scope of REQUESTED_SCOPES) {
       expect(scope.endsWith(".readonly")).toBe(true);
       for (const fragment of forbidden) expect(scope).not.toContain(fragment);
+    }
+  });
+
+  it("requests no scope that could modify Google Classroom", () => {
+    // The `.readonly` suffix is the guarantee; its absence is what write access looks like.
+    for (const scope of REQUESTED_SCOPES) {
+      expect(scope).toMatch(/^https:\/\/www\.googleapis\.com\/auth\/classroom\.[a-z.]+\.readonly$/);
     }
   });
 });

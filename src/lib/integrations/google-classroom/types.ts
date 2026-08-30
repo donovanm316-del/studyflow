@@ -61,7 +61,13 @@ export interface GoogleCourseWork {
   dueDate?: GoogleDate;
   /** Present only when Classroom carries a due time; UTC. See `normalize.ts` for the zero-value trap. */
   dueTime?: GoogleTimeOfDay;
+  creationTime?: string;
   updateTime?: string;
+}
+
+export interface GoogleListCourseWorkResponse {
+  courseWork?: GoogleCourseWork[];
+  nextPageToken?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +99,19 @@ export interface ExternalCourse {
   state: ExternalCourseState;
   /** Link to the class in the Classroom web UI, when Google supplies one. */
   url?: string;
+}
+
+/**
+ * One course's worth of retrieval, kept per course so a single failing class doesn't discard the
+ * classes that succeeded (Part 30).
+ */
+export interface CourseWorkFetchResult {
+  externalCourseId: string;
+  courseName: string;
+  /** Empty when the course genuinely has no coursework — distinct from `failed`. */
+  items: import("@/lib/data/import").ExternalWorkItem[];
+  /** Set only when this course's request failed; the others in the batch are still returned. */
+  failed?: { code: string; message: string };
 }
 
 /** What the Settings UI is told about the connection. Contains no tokens, by construction. */

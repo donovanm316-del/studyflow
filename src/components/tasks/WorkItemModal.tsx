@@ -104,11 +104,18 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
       workType,
       rigor,
       usePersonalizedEstimate: usePersonalized,
-      // Provenance is preserved across edits — editing a future imported item must not silently
-      // turn it into a manually-created one (Phase 4.5D, Part 13).
+      // Provenance is preserved across edits — editing an imported item must not silently turn it
+      // into a manually-created one (Phase 4.5D, Part 13), and the sync baseline must survive too
+      // or the next sync would re-report the student's own edit as a teacher change (Phase 5B).
       source: initial?.source,
       externalId: initial?.externalId,
+      externalCourseId: initial?.externalCourseId,
       externalUrl: initial?.externalUrl,
+      sourceUpdatedAt: initial?.sourceUpdatedAt,
+      sourceSnapshot: initial?.sourceSnapshot,
+      // Saving this form *is* the student supplying an estimate, so the placeholder flag clears
+      // whether or not they touched the field — from here on the number is theirs.
+      needsEstimate: undefined,
     } as NewWorkItemInput);
 
     onClose();

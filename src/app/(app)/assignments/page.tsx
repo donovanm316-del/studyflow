@@ -95,6 +95,9 @@ export default function AssignmentsPage() {
                   remainingMinutes={remainingMinutes}
                   plannedSessionCount={plannedSessionCount}
                   urgent={urgent}
+                  sourceLabel={item.source === "google-classroom" ? "Google Classroom" : undefined}
+                  sourceUrl={item.externalUrl}
+                  needsEstimate={item.needsEstimate}
                   onToggleComplete={() =>
                     item.status === "completed" ? markWorkItemIncomplete(item.id) : markWorkItemComplete(item.id)
                   }

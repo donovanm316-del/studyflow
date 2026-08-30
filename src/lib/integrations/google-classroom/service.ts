@@ -13,11 +13,11 @@
  * about what may cross the network boundary live in one place instead of five.
  */
 import { readGoogleConfig } from "./config";
-import { ClassroomError } from "./errors";
-import { listCourses } from "./client";
+import { ClassroomError, classroomErrorMessage, toClassroomErrorCode } from "./errors";
+import { listCourses, listCourseWork } from "./client";
 import { refreshAccessToken, type FetchLike } from "./oauth";
 import { openSession, type ClassroomSession } from "./session";
-import type { ClassroomConnectionStatus, ExternalCourse } from "./types";
+import type { ClassroomConnectionStatus, CourseWorkFetchResult, ExternalCourse } from "./types";
 
 /**
  * Everything the Settings page is allowed to know.
@@ -100,6 +100,92 @@ export async function fetchCourses(
       grantedScopes: grant.grantedScopes.length > 0 ? grant.grantedScopes : session.grantedScopes,
       lastCheckedAt: now.toISOString(),
       courseCount: courses.length,
+    },
+  };
+}
+
+export interface CourseWorkResult {
+  /** One entry per requested course, in the order the courses came back from Google. */
+  courses: CourseWorkFetchResult[];
+  /**
+   * Every active course, including ones the student excluded from syncing.
+   *
+   * Returned alongside the coursework so the course-selection UI doesn't need a second round trip
+   * to Google to render its checkboxes (Part 37) — the list was fetched anyway to resolve names.
+   */
+  allCourses: ExternalCourse[];
+  session: ClassroomSession;
+}
+
+/**
+ * Fetches coursework for the courses the student chose to sync.
+ *
+ * Two decisions worth naming:
+ *
+ * **Partial failure doesn't discard success.** Each course is fetched independently and a failure
+ * is recorded against that course alone (Part 30). One class with a permissions quirk should not
+ * cost the student the other five classes' assignments — they get what could be retrieved, plus an
+ * honest note about what couldn't.
+ *
+ * **The course list is fetched once.** Names and sections come from that single call and are joined
+ * onto each item here, rather than re-requesting a course per assignment (Part 37).
+ *
+ * A `session-expired` or `permission-denied` failure is different in kind: it will affect every
+ * course identically, so it propagates instead of being reported thirty times over.
+ */
+export async function fetchCourseWork(
+  sealedCookie: string | undefined,
+  selectedCourseIds: string[],
+  now: Date = new Date(),
+  fetchImpl: FetchLike = fetch
+): Promise<CourseWorkResult> {
+  const configResult = readGoogleConfig();
+  if (!configResult.ok) throw new ClassroomError("not-configured", `missing: ${configResult.missing.join(", ")}`);
+
+  const session = openSession(sealedCookie, configResult.config.sessionSecret);
+  if (!session) throw new ClassroomError("not-connected");
+
+  const grant = await refreshAccessToken(configResult.config, session.refreshToken, fetchImpl);
+  const allCourses = await listCourses(grant.accessToken, { fetchImpl });
+
+  // An empty selection means "every active course" — the state a student is in before they've
+  // narrowed anything down. Selecting nothing deliberately isn't expressible, and shouldn't be:
+  // that's what not syncing is for.
+  const wanted =
+    selectedCourseIds.length > 0
+      ? allCourses.filter((c) => selectedCourseIds.includes(c.externalCourseId))
+      : allCourses;
+
+  const results: CourseWorkFetchResult[] = [];
+  for (const course of wanted) {
+    try {
+      const items = await listCourseWork(grant.accessToken, course.externalCourseId, {
+        fetchImpl,
+        course: { name: course.name, section: course.section },
+      });
+      results.push({ externalCourseId: course.externalCourseId, courseName: course.name, items });
+    } catch (error) {
+      const code = toClassroomErrorCode(error);
+      // A revoked or expired authorization is not a per-course problem; failing the whole sync is
+      // both truthful and the only thing the student can act on.
+      if (code === "session-expired" || code === "permission-denied" || code === "not-connected") throw error;
+      results.push({
+        externalCourseId: course.externalCourseId,
+        courseName: course.name,
+        items: [],
+        failed: { code, message: classroomErrorMessage(code) },
+      });
+    }
+  }
+
+  return {
+    courses: results,
+    allCourses,
+    session: {
+      ...session,
+      grantedScopes: grant.grantedScopes.length > 0 ? grant.grantedScopes : session.grantedScopes,
+      lastCheckedAt: now.toISOString(),
+      courseCount: allCourses.length,
     },
   };
 }

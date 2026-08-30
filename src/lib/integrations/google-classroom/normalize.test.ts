@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCourse, normalizeCourses, normalizeClassroomDeadline, normalizeCourseWork } from "./normalize";
+import { normalizeCourse, normalizeCourses, normalizeClassroomDeadline, normalizeCourseWork, normalizeCourseWorkList } from "./normalize";
 import { normalizeExternalItem } from "@/lib/data/import";
 import { normalizeDeadline } from "@/scheduling-engine";
 import type { GoogleCourse, GoogleCourseWork } from "./types";
@@ -148,7 +148,7 @@ describe("coursework normalization", () => {
   };
 
   it("produces the Phase 4.5D import shape, so the existing boundary is reused", () => {
-    const item = normalizeCourseWork(work, "AP Biology");
+    const item = normalizeCourseWork(work, { name: "AP Biology" });
     expect(item?.source).toBe("google-classroom");
     expect(item?.externalId).toBe("cw-1");
     expect(item?.externalCourseId).toBe("123456");
@@ -166,7 +166,7 @@ describe("coursework normalization", () => {
 
   it("carries a due time all the way through to a StudyFlow deadline unchanged", () => {
     const item = normalizeCourseWork(work)!;
-    const input = normalizeExternalItem(item, "2026-08-30");
+    const input = normalizeExternalItem(item, "2026-08-30")!;
     expect(instantOf(input.dueDate)).toBe(Date.UTC(2026, 8, 4, 16, 0));
   });
 
@@ -177,5 +177,76 @@ describe("coursework normalization", () => {
   it("drops coursework with no id or no title", () => {
     expect(normalizeCourseWork({ ...work, id: undefined })).toBeNull();
     expect(normalizeCourseWork({ ...work, title: "" })).toBeNull();
+  });
+
+  it("preserves everything Classroom actually said", () => {
+    const item = normalizeCourseWork(
+      { ...work, description: "Read pages 210–240 and answer the review questions.", creationTime: "2026-08-20T09:00:00.000Z" },
+      { name: "AP Biology", section: "Period 3" }
+    )!;
+
+    expect(item.description).toBe("Read pages 210–240 and answer the review questions.");
+    expect(item.courseSection).toBe("Period 3");
+    expect(item.sourceCreatedAt).toBe("2026-08-20T09:00:00.000Z");
+    expect(item.sourceState).toBe("active");
+    expect(item.hasExactDeadline).toBe(true);
+  });
+
+  it("records whether the deadline was exact, so nothing downstream has to guess", () => {
+    expect(normalizeCourseWork(work)!.hasExactDeadline).toBe(true);
+    expect(normalizeCourseWork({ ...work, dueDate: undefined, dueTime: undefined })!.hasExactDeadline).toBe(false);
+  });
+});
+
+describe("work type mapping — conservative on purpose", () => {
+  const base: GoogleCourseWork = { id: "cw-1", title: "Anything", state: "PUBLISHED" };
+
+  it("maps Classroom's ASSIGNMENT to a plain assignment hint", () => {
+    expect(normalizeCourseWork({ ...base, workType: "ASSIGNMENT" })!.workTypeHint).toBe("assignment");
+  });
+
+  it("collapses both question types to a question hint", () => {
+    expect(normalizeCourseWork({ ...base, workType: "SHORT_ANSWER_QUESTION" })!.workTypeHint).toBe("question");
+    expect(normalizeCourseWork({ ...base, workType: "MULTIPLE_CHOICE_QUESTION" })!.workTypeHint).toBe("question");
+  });
+
+  it("says unknown rather than guessing at a type it doesn't recognize", () => {
+    expect(normalizeCourseWork({ ...base, workType: "SOMETHING_NEW" })!.workTypeHint).toBe("unknown");
+    expect(normalizeCourseWork(base)!.workTypeHint).toBe("unknown");
+  });
+
+  it("never classifies coursework as a test, quiz, essay, or project from its title", () => {
+    // The rule the phase is strictest about. "Unit 5 Test Review" is revision, not a test, and a
+    // keyword rule that got that wrong would mis-schedule a student's exam prep.
+    for (const title of ["Unit 5 Test Review", "Final Exam Study Guide", "Persuasive Essay", "Science Fair Project", "Quiz 3"]) {
+      const item = normalizeCourseWork({ ...base, title, workType: "ASSIGNMENT" })!;
+      expect(item.workTypeHint).toBe("assignment");
+    }
+  });
+
+  it("derives no duration from a description, however suggestive", () => {
+    const item = normalizeCourseWork({ ...base, description: "This should take about two hours." }) as unknown as Record<string, unknown>;
+    expect(item.estimatedMinutes).toBeUndefined();
+  });
+});
+
+describe("coursework state", () => {
+  const base: GoogleCourseWork = { id: "cw-1", title: "Work" };
+
+  it("maps Classroom's publication states", () => {
+    expect(normalizeCourseWork({ ...base, state: "PUBLISHED" })!.sourceState).toBe("active");
+    expect(normalizeCourseWork({ ...base, state: "DRAFT" })!.sourceState).toBe("draft");
+    expect(normalizeCourseWork({ ...base, state: "DELETED" })!.sourceState).toBe("removed");
+    expect(normalizeCourseWork({ ...base, state: undefined })!.sourceState).toBe("unknown");
+  });
+
+  it("filters deleted and draft coursework out of a list, keeping the rest", () => {
+    const items = normalizeCourseWorkList([
+      { id: "a", title: "Live", state: "PUBLISHED" },
+      { id: "b", title: "Deleted", state: "DELETED" },
+      { id: "c", title: "Draft", state: "DRAFT" },
+      { id: "d", title: "Unknown state" },
+    ]);
+    expect(items.map((i) => i.title)).toEqual(["Live", "Unknown state"]);
   });
 });

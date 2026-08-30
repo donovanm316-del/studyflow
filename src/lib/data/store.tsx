@@ -49,6 +49,7 @@ const EMPTY_STATE: AppState = {
   stages: [],
   activeSession: null,
   onboardingComplete: true,
+  classroomCourseIds: [],
 };
 
 export type NewWorkItemInput = Omit<SchedulableWorkItem, "id" | "userId" | "status" | "createdAt" | "updatedAt">;
@@ -106,6 +107,17 @@ interface AppDataContextValue extends AppState {
     actualMinutes: number,
     estimateFeedback?: WorkSession["estimateFeedback"]
   ) => void;
+  /**
+   * Applies one reviewed Google Classroom sync (Phase 5B): the items the student chose to import,
+   * and the source changes they chose to accept, in a single state transition.
+   *
+   * One transition rather than a loop of `addWorkItem`/`updateWorkItem` calls, so a sync of a dozen
+   * assignments produces one schedule regeneration instead of a dozen — and so the "before"
+   * snapshot the caller diffs against is genuinely the state before the whole sync.
+   */
+  applyClassroomSync: (input: { imports: NewWorkItemInput[]; updates: { id: string; patch: Partial<NewWorkItemInput> }[]; syncedAt: string }) => void;
+  /** Which Classroom courses to sync. Empty means every active course. */
+  setClassroomCourseIds: (courseIds: string[]) => void;
 }
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
@@ -500,6 +512,45 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const applyClassroomSync = useCallback(
+    ({
+      imports,
+      updates,
+      syncedAt,
+    }: {
+      imports: NewWorkItemInput[];
+      updates: { id: string; patch: Partial<NewWorkItemInput> }[];
+      syncedAt: string;
+    }) => {
+      const now = new Date().toISOString();
+      setState((s) => {
+        const patchById = new Map(updates.map((u) => [u.id, u.patch]));
+        return {
+          ...s,
+          workItems: [
+            // Existing items are patched in place — nothing is removed, reordered, or replaced. An
+            // item the student didn't accept a change for is returned untouched, `updatedAt`
+            // included, so an unaccepted change leaves no trace at all.
+            ...s.workItems.map((item) => {
+              const patch = patchById.get(item.id);
+              return patch ? ({ ...item, ...patch, updatedAt: now } as SchedulableWorkItem) : item;
+            }),
+            ...imports.map(
+              (input) =>
+                ({ ...input, id: newId("item"), userId: DEMO_USER_ID, status: "not-started", createdAt: now, updatedAt: now }) as SchedulableWorkItem
+            ),
+          ],
+          classroomLastSyncAt: syncedAt,
+        };
+      });
+    },
+    []
+  );
+
+  const setClassroomCourseIds = useCallback((courseIds: string[]) => {
+    setState((s) => ({ ...s, classroomCourseIds: courseIds }));
+  }, []);
+
   const updatePlanningProfile = useCallback((patch: Partial<PlanningProfile>) => {
     setState((s) => ({ ...s, planningProfile: { ...s.planningProfile, ...patch } }));
   }, []);
@@ -566,6 +617,8 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       startAdHocSession,
       cancelActiveSession,
       completeAdHocSession,
+      applyClassroomSync,
+      setClassroomCourseIds,
     }),
     [
       state,
@@ -597,6 +650,8 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       startAdHocSession,
       cancelActiveSession,
       completeAdHocSession,
+      applyClassroomSync,
+      setClassroomCourseIds,
     ]
   );
 

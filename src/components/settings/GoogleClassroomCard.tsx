@@ -4,7 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ClassroomSyncModal } from "@/components/settings/ClassroomSyncModal";
+import { useAppData } from "@/lib/data/store";
 import { classroomErrorMessage, type ClassroomConnectionStatus, type ClassroomErrorCode } from "@/lib/integrations/google-classroom";
+import type { ScheduleChangeSummary, WorkItemScheduleChange } from "@/scheduling-engine";
 
 /**
  * The Google Classroom connection, in Settings.
@@ -28,6 +31,22 @@ interface ApiError {
   message?: string;
 }
 
+const SCHEDULE_CHANGE_LABEL: Record<WorkItemScheduleChange["kind"], string> = {
+  added: "Added",
+  removed: "Removed",
+  moved: "Moved",
+  "duration-changed": "Time changed",
+};
+
+/** Reports what actually happened, with both halves named — never a vague "sync complete". */
+function summarizeSync(imported: number, updated: number): string {
+  if (imported === 0 && updated === 0) return "Nothing was imported or changed.";
+  const parts: string[] = [];
+  if (imported > 0) parts.push(`Imported ${imported} assignment${imported === 1 ? "" : "s"}`);
+  if (updated > 0) parts.push(`updated ${updated} from Classroom`);
+  return `${parts.join(" and ")}.`;
+}
+
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
@@ -40,6 +59,10 @@ export function GoogleClassroomCard() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [scheduleChanges, setScheduleChanges] = useState<ScheduleChangeSummary | null>(null);
+  const { workItems, classroomCourseIds, classroomLastSyncAt } = useAppData();
+  const importedCount = workItems.filter((item) => item.source === "google-classroom").length;
 
   const loadStatus = useCallback(async () => {
     try {
@@ -149,13 +172,34 @@ export function GoogleClassroomCard() {
       ) : !status.configured ? (
         <UnconfiguredState missing={status.missingConfig} />
       ) : status.connected ? (
-        <ConnectedState status={status} />
+        <ConnectedState
+          status={status}
+          courseSelectionLabel={classroomCourseIds.length === 0 ? "All active courses" : `${classroomCourseIds.length} selected`}
+          lastSyncAt={classroomLastSyncAt}
+          importedCount={importedCount}
+        />
       ) : (
         <NotConnectedState />
       )}
 
       {notice && (
         <p className="mt-3 rounded-md border border-brand-soft bg-brand-soft px-3 py-2 text-xs text-brand-strong">{notice}</p>
+      )}
+
+      {scheduleChanges && scheduleChanges.changes.length > 0 && (
+        // Real engine output — the same diff the rest of the app uses. Nothing here is composed to
+        // sound plausible.
+        <div className="mt-3 rounded-md border border-border bg-paper px-3 py-2">
+          <p className="mb-1 text-xs font-medium text-ink">Your schedule was updated</p>
+          <ul className="flex flex-col gap-0.5 text-xs text-ink-muted">
+            {scheduleChanges.changes.slice(0, 6).map((change) => (
+              <li key={change.workItemId} className="break-words">
+                {SCHEDULE_CHANGE_LABEL[change.kind]} · {change.title}
+                {change.after && <span className="text-ink-faint"> → {change.after}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {error && (
         <p role="alert" className="mt-3 rounded-md border border-danger-soft bg-danger-soft px-3 py-2 text-xs text-danger">
@@ -167,6 +211,9 @@ export function GoogleClassroomCard() {
         <div className="mt-4 flex flex-wrap gap-2">
           {status.connected ? (
             <>
+              <Button size="sm" onClick={() => setSyncOpen(true)} disabled={busy !== null}>
+                Sync now
+              </Button>
               <Button size="sm" variant="secondary" onClick={checkConnection} disabled={busy !== null}>
                 {busy === "checking" ? "Checking…" : "Check connection"}
               </Button>
@@ -180,6 +227,18 @@ export function GoogleClassroomCard() {
             </Button>
           )}
         </div>
+      )}
+
+      {syncOpen && (
+        <ClassroomSyncModal
+          open
+          onClose={() => setSyncOpen(false)}
+          onApplied={({ imported, updated, changes }) => {
+            setError(null);
+            setScheduleChanges(changes);
+            setNotice(summarizeSync(imported, updated));
+          }}
+        />
       )}
 
       <ConfirmDialog
@@ -223,8 +282,9 @@ function NotConnectedState() {
     <div className="text-xs text-ink-muted">
       <p className="mb-2">Connect your Google Classroom account to bring your coursework into StudyFlow.</p>
       <p className="text-ink-faint">
-        StudyFlow requests <span className="font-medium text-ink-muted">read-only</span> access to the list of classes
-        you&apos;re enrolled in. It can&apos;t post, submit, edit, or delete anything in Classroom.
+        StudyFlow requests <span className="font-medium text-ink-muted">read-only</span> access to the classes
+        you&apos;re enrolled in and their coursework. It can&apos;t post, submit, edit, or delete anything in Classroom,
+        and you choose what gets imported.
       </p>
     </div>
   );
@@ -238,33 +298,42 @@ function NotConnectedState() {
  * it doesn't need. "Last checked" and the course count are absent until a check has genuinely run,
  * rather than being shown as "never" or "0".
  */
-function ConnectedState({ status }: { status: ClassroomConnectionStatus }) {
+function ConnectedState({
+  status,
+  courseSelectionLabel,
+  lastSyncAt,
+  importedCount,
+}: {
+  status: ClassroomConnectionStatus;
+  courseSelectionLabel: string;
+  lastSyncAt?: string;
+  importedCount: number;
+}) {
   return (
     <div className="text-xs text-ink-muted">
       <p className="mb-2">
-        StudyFlow can read the list of classes you&apos;re enrolled in. Importing assignments isn&apos;t built yet — this
-        connection doesn&apos;t add anything to your schedule on its own.
+        StudyFlow reads your classes and coursework. It never changes anything in Google Classroom, and it only imports
+        what you choose during a sync.
       </p>
       <dl className="flex flex-col gap-1 text-ink-faint">
-        {status.connectedAt && (
-          <div className="flex gap-2">
-            <dt>Connected</dt>
-            <dd className="text-ink-muted">{formatTimestamp(status.connectedAt)}</dd>
-          </div>
-        )}
-        {status.lastCheckedAt && (
-          <div className="flex gap-2">
-            <dt>Last checked</dt>
-            <dd className="text-ink-muted">{formatTimestamp(status.lastCheckedAt)}</dd>
-          </div>
-        )}
-        {status.courseCount !== undefined && (
-          <div className="flex gap-2">
-            <dt>Classes found</dt>
-            <dd className="text-ink-muted">{status.courseCount}</dd>
-          </div>
-        )}
+        <Row label="Syncing" value={courseSelectionLabel} />
+        {status.courseCount !== undefined && <Row label="Classes found" value={String(status.courseCount)} />}
+        {lastSyncAt && <Row label="Last sync" value={formatTimestamp(lastSyncAt)} />}
+        {status.lastCheckedAt && <Row label="Last checked" value={formatTimestamp(status.lastCheckedAt)} />}
+        {status.connectedAt && <Row label="Connected" value={formatTimestamp(status.connectedAt)} />}
+        {/* A count of what's actually in the planner, not of what Classroom holds — Settings
+            reports StudyFlow's state, and doesn't try to be a second Classroom dashboard. */}
+        {importedCount > 0 && <Row label="Imported into StudyFlow" value={String(importedCount)} />}
       </dl>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      <dt>{label}</dt>
+      <dd className="text-ink-muted">{value}</dd>
     </div>
   );
 }
