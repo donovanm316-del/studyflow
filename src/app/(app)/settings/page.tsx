@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { CommitmentModal } from "@/components/tasks/CommitmentModal";
+import { GoogleClassroomCard } from "@/components/settings/GoogleClassroomCard";
 import { useAppData } from "@/lib/data/store";
 import type { BreakPreference, Commitment, FreeTimePriority, WorkStyle, WorkloadTolerance } from "@/types/models";
 
@@ -188,15 +189,7 @@ export default function SettingsPage() {
           </Button>
         </section>
 
-        <section className="rounded-lg border border-border bg-surface p-5">
-          <h2 className="mb-1 text-sm font-semibold text-ink">Connections</h2>
-          <p className="mb-4 text-xs text-ink-faint">
-            Google Classroom import is planned for a future phase and is not available yet.
-          </p>
-          <Button variant="secondary" disabled>
-            Connect Google Classroom
-          </Button>
-        </section>
+        <GoogleClassroomCard />
       </div>
 
       {addOpen && <CommitmentModal open onClose={() => setAddOpen(false)} onSubmit={addCommitment} />}

@@ -82,14 +82,23 @@ interface WorkItemBase {
   source?: WorkItemSource;
   /** Stable identifier from the originating system, used to recognize an item on re-import. */
   externalId?: string;
+  /**
+   * The class this item came from in the source system (Phase 5A). Held separately from `subject`
+   * because the two answer different questions: `subject` is the student's own label and drives
+   * estimate personalization, while this is an opaque provider id that survives the teacher
+   * renaming the class. Like the fields above, the scheduling engine never reads it.
+   */
+  externalCourseId?: string;
   /** Link back to the item in its source system, when there is one. */
   externalUrl?: string;
 }
 
 /**
- * Recognized origins for a work item. `google-classroom` is declared so the import boundary and
- * its tests can be written against a real value — no Classroom integration exists yet, and none
- * is implemented in this phase.
+ * Recognized origins for a work item.
+ *
+ * As of Phase 5A a real Google Classroom connection exists (OAuth, course retrieval), but nothing
+ * is imported from it yet — no work item in the app carries `google-classroom` until Phase 5B
+ * implements the import itself.
  */
 export type WorkItemSource = "manual" | "google-classroom";
 

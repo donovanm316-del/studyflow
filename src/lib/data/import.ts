@@ -37,6 +37,18 @@ export interface ExternalWorkItem {
   /** Course/class name, mapped onto `subject` for estimate personalization matching. */
   courseName?: string;
   externalUrl?: string;
+  /**
+   * The class this item belongs to in the source system (Phase 5A). Kept alongside `courseName`
+   * rather than instead of it: the name is what the student reads and can be renamed by a teacher
+   * at any time, while the id is what a re-sync can rely on.
+   */
+  externalCourseId?: string;
+  /**
+   * When the source system last modified this item, verbatim from the provider. Recorded at the
+   * boundary because Phase 5B's sync will need it to skip untouched work; nothing reads it yet,
+   * and it is deliberately not persisted onto the work item until something actually does.
+   */
+  sourceUpdatedAt?: string;
 }
 
 /** What the student must fill in themselves, because no external system knows it. */
@@ -75,6 +87,7 @@ export function normalizeExternalItem(
     ...defaults,
     source: external.source,
     externalId: external.externalId,
+    externalCourseId: external.externalCourseId,
     externalUrl: external.externalUrl,
   } as NewWorkItemInput;
 }

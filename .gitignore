@@ -42,3 +42,7 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# ...except the placeholder template, which carries variable names and no values. This negation
+# must stay below every `.env*` rule above it, or git ignores the exception.
+!.env.example
