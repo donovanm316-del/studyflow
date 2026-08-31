@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/Input";
 import { TimeAvailableCard } from "@/components/schedule/TimeAvailableCard";
 import { useAppData } from "@/lib/data/store";
 import { useSchedule, useScheduleInput } from "@/lib/data/useSchedule";
-import { blockCardKind, formatTimeRange } from "@/lib/schedule-format";
+import { blockCardKind, formatTimeRange, resolveWorkItemForBlock } from "@/lib/schedule-format";
 import { currentWeekRange, todayDateOnly } from "@/lib/now";
 import { nowLocalIso } from "@/lib/now";
 import { getNextBestAction } from "@/lib/next-best-action";
@@ -310,7 +310,16 @@ export default function TodayPage() {
       {!activeSession &&
         (nextAction.kind === "scheduled" || (nextAction.kind === "no-work" && !showCaughtUpPanel)) && (
           <div className="mb-4">
-            <NextUpCard action={nextAction} onStart={nextAction.kind === "scheduled" ? () => startSession(nextAction.block) : undefined} />
+            <NextUpCard
+              action={nextAction}
+              onStart={nextAction.kind === "scheduled" ? () => startSession(nextAction.block) : undefined}
+              sourceLabel={
+                nextAction.kind === "scheduled" &&
+                resolveWorkItemForBlock(nextAction.block, workItems, stages)?.source === "google-classroom"
+                  ? "Google Classroom"
+                  : undefined
+              }
+            />
           </div>
         )}
 

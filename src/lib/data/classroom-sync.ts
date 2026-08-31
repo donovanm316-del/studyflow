@@ -290,6 +290,29 @@ export function describeCourseFailures(failedCourseNames: string[], succeededCou
 }
 
 /**
+ * "Last synced today at 4:32 PM" / "yesterday" / a date / "Never synced" (Phase 5C, Part 10).
+ *
+ * Deliberately never implies anything more current than the timestamp actually recorded — there is
+ * no background sync, so a five-minute-old label and a five-day-old one both say exactly how old
+ * they are rather than something reassuring like "up to date". `now` is a parameter rather than
+ * read from the clock so this stays testable and deterministic like everything else in this module.
+ */
+export function formatSyncRecency(lastSyncAt: string | undefined, now: Date = new Date()): string {
+  if (!lastSyncAt) return "Never synced";
+  const date = new Date(lastSyncAt);
+  if (Number.isNaN(date.getTime())) return "Never synced";
+
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (date.toDateString() === now.toDateString()) return `Last synced today at ${time}`;
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return `Last synced yesterday at ${time}`;
+
+  return `Last synced ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+}
+
+/**
  * What this sync would do to the student's schedule, computed before anything is applied.
  *
  * Runs the **existing** scheduler twice — once on the current inputs, once on a throwaway copy with

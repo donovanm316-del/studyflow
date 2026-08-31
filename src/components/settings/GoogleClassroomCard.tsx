@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ClassroomSyncModal } from "@/components/settings/ClassroomSyncModal";
 import { ClassroomCourseManager } from "@/components/settings/ClassroomCourseManager";
 import { ScheduleChangeNotice } from "@/components/schedule/ScheduleChangeNotice";
+import { formatSyncRecency } from "@/lib/data/classroom-sync";
 import { useAppData } from "@/lib/data/store";
 import { classroomErrorMessage, type ClassroomConnectionStatus, type ClassroomErrorCode } from "@/lib/integrations/google-classroom";
 import type { ScheduleChangeSummary } from "@/scheduling-engine";
@@ -217,6 +219,22 @@ export function GoogleClassroomCard() {
           sound plausible, and it says so explicitly even when nothing changed (Part 13). */}
       {scheduleChanges && <ScheduleChangeNotice summary={scheduleChanges} />}
 
+      {/* Only the follow-ups that actually apply, right after a sync that produced them (Part 9). */}
+      {scheduleChanges && (needsEstimateCount > 0 || scheduleChanges.changes.length > 0) && (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          {needsEstimateCount > 0 && (
+            <Link href="/assignments" className="text-brand-strong underline underline-offset-2 hover:opacity-80">
+              Review assignments needing estimates
+            </Link>
+          )}
+          {scheduleChanges.changes.length > 0 && (
+            <Link href="/schedule" className="text-brand-strong underline underline-offset-2 hover:opacity-80">
+              View updated schedule
+            </Link>
+          )}
+        </div>
+      )}
+
       {error && (
         <p role="alert" className="mt-3 rounded-md border border-danger-soft bg-danger-soft px-3 py-2 text-xs text-danger">
           {error}
@@ -373,7 +391,10 @@ function ConnectedState({
           </button>
         </div>
         {status.courseCount !== undefined && <Row label="Classes found" value={String(status.courseCount)} />}
-        {lastSyncAt && <Row label="Last sync" value={formatTimestamp(lastSyncAt)} />}
+        {/* Always shown, including "Never synced" — a student should never have to guess whether
+            Classroom data might be stale (Part 10). No background sync exists to make this stale
+            in the first place; Sync Now is always the manual action that changes it. */}
+        <Row label="Sync" value={formatSyncRecency(lastSyncAt)} />
         {status.lastCheckedAt && <Row label="Last checked" value={formatTimestamp(status.lastCheckedAt)} />}
         {status.connectedAt && <Row label="Connected" value={formatTimestamp(status.connectedAt)} />}
         {/* A count of what's actually in the planner, not of what Classroom holds — Settings

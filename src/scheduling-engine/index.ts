@@ -19,8 +19,8 @@ export { calculateWorkloadStatus } from "./workload-status";
 export { explainScheduleDecision } from "./explanation";
 export { diffSchedules } from "./schedule-diff";
 export { calculateAvailableMinutesBeforeDeadline, calculateDeadlineCapacity } from "./deadline-capacity";
-export { buildEstimateHistory, personalizeEstimate } from "./estimation";
-export type { EstimateAdjustment, EstimateConfidence, EstimateHistory, EstimateMatchLevel } from "./estimation";
+export { buildEstimateHistory, personalizeEstimate, suggestDurationFromHistory } from "./estimation";
+export type { DurationSuggestion, EstimateAdjustment, EstimateConfidence, EstimateHistory, EstimateMatchLevel } from "./estimation";
 export type { AvailableTimeOptions, DeadlineCapacity, DeadlineRiskLevel } from "./deadline-capacity";
 export {
   isDecomposable,

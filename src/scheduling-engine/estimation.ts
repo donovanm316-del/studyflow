@@ -51,7 +51,15 @@ export interface EstimateAdjustment {
 }
 
 interface Bucket {
-  ratios: { ratio: number; at: string }[];
+  /**
+   * `actualMinutes` rides alongside each ratio sample (Phase 5C) so a duration suggestion for an
+   * item that has no estimate yet — imported work before the student has typed a number
+   * — can be read straight from real recorded durations, without needing an existing estimate to
+   * scale a ratio against. Scaling the ratio math against an arbitrary anchor instead would produce
+   * a plausible-looking number with no real meaning; the actual recorded durations do not have
+   * that problem. See `suggestDurationFromHistory`.
+   */
+  samples: { ratio: number; actualMinutes: number; at: string }[];
 }
 
 export interface EstimateHistory {
@@ -91,9 +99,9 @@ export function buildEstimateHistory(
   const stageById = new Map(stages.map((s) => [s.id, s]));
   const buckets = new Map<string, Bucket>();
 
-  const push = (key: string, ratio: number, at: string) => {
-    if (!buckets.has(key)) buckets.set(key, { ratios: [] });
-    buckets.get(key)!.ratios.push({ ratio, at });
+  const push = (key: string, ratio: number, actualMinutes: number, at: string) => {
+    if (!buckets.has(key)) buckets.set(key, { samples: [] });
+    buckets.get(key)!.samples.push({ ratio, actualMinutes, at });
   };
 
   let totalSamples = 0;
@@ -105,16 +113,16 @@ export function buildEstimateHistory(
 
     const ratio = actual / planned;
     const at = session.start;
-    push("overall", ratio, at);
+    push("overall", ratio, actual, at);
     totalSamples += 1;
 
     const stage = stageById.get(session.workItemId);
     const item = itemById.get(stage ? stage.workItemId : session.workItemId);
     if (!item) continue;
 
-    push(keyFor("type", item.workType), ratio, at);
-    push(keyFor("type-rigor", item.workType, item.rigor), ratio, at);
-    push(keyFor("type-rigor-subject", item.workType, item.rigor, item.subject), ratio, at);
+    push(keyFor("type", item.workType), ratio, actual, at);
+    push(keyFor("type-rigor", item.workType, item.rigor), ratio, actual, at);
+    push(keyFor("type-rigor-subject", item.workType, item.rigor, item.subject), ratio, actual, at);
   }
 
   return { buckets, totalSamples };
@@ -139,6 +147,7 @@ function confidenceFor(sampleSize: number): EstimateConfidence {
 interface Resolved {
   level: EstimateMatchLevel;
   ratios: number[];
+  actualMinutes: number[];
   sampleSize: number;
 }
 
@@ -154,12 +163,14 @@ function resolveBucket(history: EstimateHistory, item: SchedulableWorkItem): Res
     const bucket = history.buckets.get(keyFor(level, item.workType, item.rigor, item.subject));
     if (!bucket) continue;
     // Recency: only the most recent samples count, so improvement isn't outweighed by old habits.
-    const recent = [...bucket.ratios]
-      .sort((a, b) => (a.at < b.at ? 1 : -1))
-      .slice(0, ESTIMATE_RECENT_WINDOW)
-      .map((r) => r.ratio);
+    const recent = [...bucket.samples].sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, ESTIMATE_RECENT_WINDOW);
     if (recent.length >= ESTIMATE_MIN_SAMPLES) {
-      return { level, ratios: recent, sampleSize: recent.length };
+      return {
+        level,
+        ratios: recent.map((r) => r.ratio),
+        actualMinutes: recent.map((r) => r.actualMinutes),
+        sampleSize: recent.length,
+      };
     }
   }
   return null;
@@ -253,4 +264,51 @@ export function personalizeEstimate(item: SchedulableWorkItem, history: Estimate
     adjusted: planningMinutes !== studentMinutes,
     reason: describe(median, resolved.sampleSize, resolved.level),
   };
+}
+
+/**
+ * A duration suggestion built directly from real recorded time on similar past work — for the one
+ * moment `personalizeEstimate` can't help with: an item that has no estimate yet at all, such as
+ * externally-imported work waiting on the student (Phase 5C, Part 4).
+ *
+ * This is not a second estimation system. It reuses the exact same category resolution
+ * (type+rigor+subject → type+rigor → type → overall), the same recency window, and the same
+ * minimum-sample gate as `personalizeEstimate` — the only difference is reading `actualMinutes`
+ * instead of `ratio`, because there is no existing estimate here for a ratio to scale. The student
+ * still types the final number themselves; this only informs the guess, and is never applied
+ * automatically.
+ */
+export interface DurationSuggestion {
+  /** A realistic spread from the 25th–75th percentile of similar recorded sessions. */
+  lowMinutes: number;
+  highMinutes: number;
+  medianMinutes: number;
+  sampleSize: number;
+  matchLevel: EstimateMatchLevel;
+}
+
+export function suggestDurationFromHistory(
+  workType: WorkType,
+  history: EstimateHistory,
+  rigor?: CourseRigor,
+  subject?: string
+): DurationSuggestion | null {
+  const levels: EstimateMatchLevel[] = ["type-rigor-subject", "type-rigor", "type", "overall"];
+
+  for (const level of levels) {
+    const bucket = history.buckets.get(keyFor(level, workType, rigor, subject));
+    if (!bucket) continue;
+    const recent = [...bucket.samples].sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, ESTIMATE_RECENT_WINDOW);
+    if (recent.length < ESTIMATE_MIN_SAMPLES) continue;
+
+    const sorted = recent.map((r) => r.actualMinutes).sort((a, b) => a - b);
+    return {
+      lowMinutes: roundToFive(percentile(sorted, 0.25)),
+      medianMinutes: roundToFive(percentile(sorted, 0.5)),
+      highMinutes: roundToFive(percentile(sorted, 0.75)),
+      sampleSize: recent.length,
+      matchLevel: level,
+    };
+  }
+  return null;
 }

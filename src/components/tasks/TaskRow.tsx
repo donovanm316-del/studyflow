@@ -39,6 +39,8 @@ export interface TaskRowProps {
    * make the student's own placeholder look like something their teacher set.
    */
   isTargetDate?: boolean;
+  /** When provided, the title becomes a link opening a detail view (Phase 5C, Part 5) instead of plain text. */
+  onTitleClick?: () => void;
 }
 
 const statusTone: Record<WorkItemStatus, BadgeTone> = {
@@ -71,6 +73,7 @@ export function TaskRow({
   sourceUrl,
   needsEstimate,
   isTargetDate,
+  onTitleClick,
 }: TaskRowProps) {
   const contextParts: string[] = [];
   if (remainingMinutes != null && remainingMinutes > 0 && remainingMinutes !== estimatedMinutes) {
@@ -98,9 +101,22 @@ export function TaskRow({
               className="h-4 w-4 shrink-0 rounded border-border-strong accent-brand"
             />
           )}
-          <span className={cn("truncate text-sm font-medium text-ink", status === "completed" && "line-through text-ink-muted")}>
-            {title}
-          </span>
+          {onTitleClick ? (
+            <button
+              type="button"
+              onClick={onTitleClick}
+              className={cn(
+                "truncate text-left text-sm font-medium text-ink underline-offset-2 hover:underline",
+                status === "completed" && "line-through text-ink-muted"
+              )}
+            >
+              {title}
+            </button>
+          ) : (
+            <span className={cn("truncate text-sm font-medium text-ink", status === "completed" && "line-through text-ink-muted")}>
+              {title}
+            </span>
+          )}
           <Badge tone="neutral" className="shrink-0">{kindLabel}</Badge>
           {sourceLabel && <Badge tone="brand" className="shrink-0">{sourceLabel}</Badge>}
         </div>

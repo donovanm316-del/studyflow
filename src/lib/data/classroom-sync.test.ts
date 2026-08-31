@@ -3,6 +3,7 @@ import {
   actionableCount,
   describeCourseFailures,
   externalKey,
+  formatSyncRecency,
   previewSyncImpact,
   reconcileCoursework,
   summarizeReconcile,
@@ -403,5 +404,37 @@ describe("deselecting a Classroom course (Phase 5C, Part 12)", () => {
       planningProfile: makePlanningProfile(),
     });
     expect(result.blocks.filter((b) => b.workItemId === imported.id).length).toBeGreaterThan(0);
+  });
+});
+
+describe("formatSyncRecency (Phase 5C, Part 10)", () => {
+  const NOW_DATE = new Date("2026-08-30T18:00:00");
+
+  it("reports never synced when there's no timestamp", () => {
+    expect(formatSyncRecency(undefined, NOW_DATE)).toBe("Never synced");
+  });
+
+  it("reports never synced for a malformed timestamp rather than throwing", () => {
+    expect(formatSyncRecency("not-a-date", NOW_DATE)).toBe("Never synced");
+  });
+
+  it("says 'today' for a sync earlier the same day, with the time", () => {
+    expect(formatSyncRecency("2026-08-30T16:32:00", NOW_DATE)).toMatch(/^Last synced today at /);
+  });
+
+  it("says 'yesterday' for a sync the previous calendar day", () => {
+    expect(formatSyncRecency("2026-08-29T22:00:00", NOW_DATE)).toMatch(/^Last synced yesterday at /);
+  });
+
+  it("falls back to a plain date further back, without implying it's current", () => {
+    const label = formatSyncRecency("2026-08-20T10:00:00", NOW_DATE);
+    expect(label).toMatch(/^Last synced /);
+    expect(label).not.toMatch(/today|yesterday/);
+  });
+
+  it("never claims real-time sync — every branch is explicitly in the past", () => {
+    for (const iso of ["2026-08-30T16:32:00", "2026-08-29T22:00:00", "2026-08-20T10:00:00"]) {
+      expect(formatSyncRecency(iso, NOW_DATE)).not.toMatch(/just now|live|real.?time/i);
+    }
   });
 });

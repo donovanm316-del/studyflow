@@ -227,9 +227,9 @@ describe("data safety", () => {
     expect(serialized).not.toMatch(/refreshToken|accessToken|client_secret|ya29|1\/\//);
   });
 
-  it("keeps the sync-tracking fields to the minimum reconciliation needs", () => {
-    // Part 29: a comparison baseline, not a cached copy of the API response. Descriptions,
-    // instructions, and raw Google payloads are deliberately not persisted onto the work item.
+  it("keeps the sync-tracking baseline to the minimum reconciliation needs", () => {
+    // Part 29: `sourceSnapshot` is a comparison baseline, not a cached copy of the API response —
+    // it stays three fields regardless of what else the source supplies.
     const input = normalizeExternalItem(
       {
         source: "google-classroom",
@@ -238,14 +238,36 @@ describe("data safety", () => {
         title: "Reading",
         dueDate: "2026-09-04T15:00",
         courseName: "AP Biology",
-        description: "A long set of instructions that StudyFlow has no reason to keep a copy of.",
+        description: "Read pages 40-55 and answer the review questions at the end of the chapter.",
         sourceUpdatedAt: "2026-08-30T12:00:00.000Z",
       },
       "2026-08-24"
     )!;
 
     expect(Object.keys(input.sourceSnapshot!).sort()).toEqual(["courseName", "dueDate", "title"]);
-    expect(JSON.stringify(input)).not.toContain("no reason to keep");
+  });
+
+  it("stores the description as display text (Phase 5C, Part 5), never a copy of Google's raw response shape", () => {
+    // The description itself is legitimately kept now, for the assignment detail view — but only
+    // as plain text on its own field. No Google-specific wrapper (id/courseId/workType/etc.) is
+    // ever persisted alongside it.
+    const input = normalizeExternalItem(
+      {
+        source: "google-classroom",
+        externalId: "cw-1",
+        externalCourseId: "c1",
+        title: "Reading",
+        dueDate: "2026-09-04T15:00",
+        courseName: "AP Biology",
+        description: "Read pages 40-55 and answer the review questions at the end of the chapter.",
+        sourceUpdatedAt: "2026-08-30T12:00:00.000Z",
+      },
+      "2026-08-24"
+    )!;
+
+    expect(input.sourceDescription).toBe("Read pages 40-55 and answer the review questions at the end of the chapter.");
+    // Google's own field names for the same data never leak through — only StudyFlow's own shape.
+    expect(JSON.stringify(input)).not.toMatch(/"courseWork"|"alternateLink"|"workTypeHint"/);
   });
 });
 

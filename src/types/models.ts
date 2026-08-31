@@ -91,6 +91,13 @@ interface WorkItemBase {
   externalCourseId?: string;
   /** Link back to the item in its source system, when there is one. */
   externalUrl?: string;
+  /**
+   * The source's own description/instructions text, verbatim (Phase 5C, Part 5). Teacher-owned,
+   * like title and due date — refreshed silently on sync, never edited by the student. Kept
+   * separate from `notes`, which is the student's own and is never touched by a sync. Absent for
+   * manually-created items, and for imported items the source gave no description.
+   */
+  sourceDescription?: string;
   /** When the source system last modified this item, verbatim from the provider (Phase 5B). */
   sourceUpdatedAt?: string;
   /**

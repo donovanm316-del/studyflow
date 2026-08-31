@@ -346,6 +346,32 @@ Syncing is manual. There is no background polling and no automatic refresh. One 
 course list once and then one page-set of coursework per selected course, following pagination and
 stopping at a hard page cap so a misbehaving `nextPageToken` cannot spin forever.
 
+## What Classroom data means for planning
+
+Google Classroom is a source of coursework, not a scheduler. Everything below reads the *existing*
+scheduling engine's own output — none of it is a second capacity or priority calculation, and none
+of it is specific to Classroom: a manually-typed assignment in the same course counts the same way.
+
+- **Course workload** (Dashboard) — how much work remains, how much of it is due soon, and the worst
+  deadline risk among each course's items, grouped by `subject`. A course table row expands to show
+  the next deadline, which day the course's scheduled work is concentrated on (only stated when one
+  day genuinely holds at least half of it), and a real Classroom link when one exists.
+- **"What this means for your week"** — a few deterministic sentences (assignments due, work
+  remaining, where the pressure falls, anything genuinely short on time, buffer) built from the same
+  numbers the workload badge above them already shows. A line is only shown when there's real data
+  behind it; an easy week produces a short summary, not a padded one.
+- **Estimate suggestions** — reviewing several "estimate needed" items in one pass (Assignments) can
+  show "your past similar work usually took about X–Y minutes," sourced from real recorded session
+  durations for matching work (same type/rigor/subject matching `personalizeEstimate` already uses).
+  It is a suggestion only: the field starts empty, and the student's own number is what StudyFlow
+  plans with.
+- **Assignment detail** — clicking a title shows the Classroom-owned facts (course, deadline,
+  description, link) separately from the StudyFlow-owned plan (estimate, sessions, start
+  recommendation, buffer) — the same `summarizeBuffer`/`recommendStartDate` every other page uses.
+- **Next Best Action** — when the next recommended session happens to be Classroom-sourced, it's
+  labeled as such. The recommendation itself is unchanged: the engine picks the next block the same
+  way regardless of where the work came from, and no Classroom item is ever prioritized for being one.
+
 ---
 
 ## Disconnecting

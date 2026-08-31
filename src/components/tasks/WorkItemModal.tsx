@@ -112,6 +112,7 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
       externalId: initial?.externalId,
       externalCourseId: initial?.externalCourseId,
       externalUrl: initial?.externalUrl,
+      sourceDescription: initial?.sourceDescription,
       sourceUpdatedAt: initial?.sourceUpdatedAt,
       sourceSnapshot: initial?.sourceSnapshot,
       // Saving this form *is* the student supplying an estimate, so the placeholder flag clears

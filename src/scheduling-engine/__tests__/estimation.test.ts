@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEstimateHistory, personalizeEstimate } from "../estimation";
+import { buildEstimateHistory, personalizeEstimate, suggestDurationFromHistory } from "../estimation";
 import { refineEstimate } from "../index";
 import { ESTIMATE_MAX_RATIO, ESTIMATE_MIN_SAMPLES } from "../constants";
 import { makeAssignment, makeProject } from "./fixtures";
@@ -259,6 +259,74 @@ describe("recency — the student improves (Scenario I)", () => {
     expect(growth[0]).toBeLessThanOrEqual(growth[1]);
     expect(growth[1]).toBeLessThanOrEqual(growth[2]);
     expect(growth[0]).toBeGreaterThan(60);
+  });
+});
+
+describe("suggestDurationFromHistory (Phase 5C, Part 4) — for an item with no estimate yet", () => {
+  it("returns null with no history at all", () => {
+    const history = buildEstimateHistory([], []);
+    expect(suggestDurationFromHistory("reading", history)).toBeNull();
+  });
+
+  it("returns null below the minimum sample size", () => {
+    const item = makeAssignment({ workType: "reading", estimatedMinutes: 40 });
+    const sessions = repeated(item, ESTIMATE_MIN_SAMPLES - 1, 1.0);
+    const history = buildEstimateHistory(sessions, [item]);
+    expect(suggestDurationFromHistory("reading", history)).toBeNull();
+  });
+
+  it("suggests a range from real recorded durations, not a ratio applied to nothing", () => {
+    // Sessions planned for 40, actually taking 35, 40, 45 minutes — real recorded durations.
+    const item = makeAssignment({ workType: "reading", estimatedMinutes: 40 });
+    const sessions = [
+      session(item.id, 40, 35, "2026-08-10T16:00"),
+      session(item.id, 40, 40, "2026-08-11T16:00"),
+      session(item.id, 40, 45, "2026-08-12T16:00"),
+    ];
+    const history = buildEstimateHistory(sessions, [item]);
+    const suggestion = suggestDurationFromHistory("reading", history)!;
+
+    expect(suggestion.medianMinutes).toBe(40);
+    expect(suggestion.lowMinutes).toBeLessThanOrEqual(40);
+    expect(suggestion.highMinutes).toBeGreaterThanOrEqual(40);
+    expect(suggestion.sampleSize).toBe(3);
+  });
+
+  it("matches the most specific category with enough samples, falling back outward", () => {
+    const bio = makeAssignment({ workType: "reading", rigor: "ap", subject: "AP Biology", estimatedMinutes: 40 });
+    const otherReading = makeAssignment({ workType: "reading", estimatedMinutes: 40 });
+    // Only 2 AP Biology reading sessions (below the minimum) but plenty of "reading" overall.
+    const specific = repeated(bio, 2, 1.0, 5).map((s) => ({ ...s, minutesSpent: 50 }));
+    const general = repeated(otherReading, 5, 1.0, 20).map((s) => ({ ...s, minutesSpent: 30 }));
+    const history = buildEstimateHistory([...specific, ...general], [bio, otherReading], []);
+
+    const suggestion = suggestDurationFromHistory("reading", history, "ap", "AP Biology");
+    // Falls back to "type" (or wider) since the subject-specific bucket has too few samples.
+    expect(suggestion?.matchLevel).not.toBe("type-rigor-subject");
+    expect(suggestion?.medianMinutes).toBe(30);
+  });
+
+  it("suggests exactly what matching real history says, whatever type is asked for", () => {
+    // suggestDurationFromHistory falls back all the way to "overall" the same way
+    // personalizeEstimate does — any recorded history informs a suggestion for a type with no
+    // history of its own, consistent with the rest of the personalization system.
+    const item = makeAssignment({ workType: "reading", estimatedMinutes: 40 });
+    const history = buildEstimateHistory(repeated(item, 5, 1.0), [item]);
+    const suggestion = suggestDurationFromHistory("project", history);
+    expect(suggestion?.matchLevel).toBe("overall");
+  });
+
+  it("rounds to the nearest 5 minutes, like every other duration in the product", () => {
+    const item = makeAssignment({ workType: "essay", estimatedMinutes: 40 });
+    const sessions = [
+      session(item.id, 40, 33, "2026-08-10T16:00"),
+      session(item.id, 40, 37, "2026-08-11T16:00"),
+      session(item.id, 40, 41, "2026-08-12T16:00"),
+    ];
+    const suggestion = suggestDurationFromHistory("essay", buildEstimateHistory(sessions, [item]))!;
+    for (const minutes of [suggestion.lowMinutes, suggestion.medianMinutes, suggestion.highMinutes]) {
+      expect(minutes % 5).toBe(0);
+    }
   });
 });
 

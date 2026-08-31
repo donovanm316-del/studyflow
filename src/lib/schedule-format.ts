@@ -53,6 +53,40 @@ export function blockMatchesWorkItem(block: ScheduleBlock, workItemId: string, s
   return stage?.workItemId === workItemId;
 }
 
+/**
+ * Resolves a block's `workItemId` — a stage id for decomposed work — back to the parent work item.
+ * Used wherever a block needs to be traced back to its item's own fields (e.g. `source`, for a
+ * Classroom badge on the Next Best Action card) without a second copy of the stage-resolution rule.
+ */
+export function resolveWorkItemForBlock(
+  block: { workItemId?: string },
+  workItems: SchedulableWorkItem[],
+  stages: WorkStage[]
+): SchedulableWorkItem | undefined {
+  if (!block.workItemId) return undefined;
+  const direct = workItems.find((i) => i.id === block.workItemId);
+  if (direct) return direct;
+  const stage = stages.find((s) => s.id === block.workItemId);
+  return stage ? workItems.find((i) => i.id === stage.workItemId) : undefined;
+}
+
+/**
+ * The dates of every planned or completed block belonging to any of `itemIds` — including their
+ * decomposed stages, resolved the same way `blockMatchesWorkItem` does (Phase 5C, Part 2: feeds
+ * `courseConcentrationDay`, which needs real per-day counts, not a re-derivation of the match rule).
+ */
+export function blockDatesForItems(blocks: ScheduleBlock[], itemIds: string[], stages: WorkStage[]): string[] {
+  const ids = new Set(itemIds);
+  const stageParent = new Map(stages.map((s) => [s.id, s.workItemId]));
+  return blocks
+    .filter((b) => {
+      if (!b.workItemId || (b.status !== "planned" && b.status !== "completed")) return false;
+      const parent = stageParent.get(b.workItemId) ?? b.workItemId;
+      return ids.has(parent);
+    })
+    .map((b) => b.start.slice(0, 10));
+}
+
 /** Fields the scheduler actually reacts to — used to decide whether an edit deserves the
  *  "your schedule was updated" notice (Phase 3B, Part 8/9), not every cosmetic change. */
 export function changesSchedule(before: SchedulableWorkItem, after: NewWorkItemInput): boolean {

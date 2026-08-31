@@ -9,12 +9,14 @@ import { TaskRow } from "@/components/tasks/TaskRow";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WorkloadStatusBadge } from "@/components/schedule/WorkloadStatusBadge";
 import { NextUpCard } from "@/components/schedule/NextUpCard";
+import { CourseWorkloadTable } from "@/components/dashboard/CourseWorkloadTable";
 import { useAppData } from "@/lib/data/store";
 import { useSchedule } from "@/lib/data/useSchedule";
-import { blockMatchesWorkItem, formatDueLabel } from "@/lib/schedule-format";
+import { blockDatesForItems, blockMatchesWorkItem, formatDueLabel, resolveWorkItemForBlock } from "@/lib/schedule-format";
 import { currentWeekRange, todayDateOnly, nowLocalIso } from "@/lib/now";
 import { getNextBestAction } from "@/lib/next-best-action";
 import { summarizeWeek } from "@/lib/decision-support";
+import { busiestCourse, buildWeekInsightLines, courseConcentrationDay, courseWorkloadBreakdown } from "@/lib/classroom-insights";
 import { addDays } from "@/scheduling-engine";
 
 const KIND_LABEL: Record<string, string> = { assignment: "Assignment", test: "Test", quiz: "Quiz", project: "Project" };
@@ -27,6 +29,19 @@ export default function DashboardPage() {
   const result = useSchedule(start, end);
   const nextAction = useMemo(() => getNextBestAction(result, activeSession, nowLocalIso()), [result, activeSession]);
   const weekSummary = useMemo(() => summarizeWeek(result), [result]);
+  const weekInsightLines = useMemo(() => buildWeekInsightLines(result, workItems, start, end), [result, workItems, start, end]);
+  const courseWorkload = useMemo(
+    () => courseWorkloadBreakdown(workItems, result.deadlineCapacities, end),
+    [workItems, result.deadlineCapacities, end]
+  );
+  const busiest = useMemo(() => busiestCourse(courseWorkload), [courseWorkload]);
+  const concentrationDayBySubject = useMemo(() => {
+    const map: Record<string, string | null> = {};
+    for (const course of courseWorkload) {
+      map[course.subject] = courseConcentrationDay(blockDatesForItems(result.blocks, course.itemIds, stages));
+    }
+    return map;
+  }, [courseWorkload, result.blocks, stages]);
 
   const dueThisWeek = workItems.filter((item) => item.dueDate.slice(0, 10) >= start && item.dueDate.slice(0, 10) <= end);
   const completedThisWeek = dueThisWeek.filter((item) => item.status === "completed").length;
@@ -69,11 +84,32 @@ export default function DashboardPage() {
       <section className="mb-6 rounded-lg border border-border bg-surface p-4">
         <p className="text-sm font-medium text-ink">{weekSummary.headline}</p>
         <p className="mt-1 text-sm text-ink-muted">{weekSummary.detail}</p>
+        {/* Deterministic templates over the same engine numbers above — not a second read on the
+            week, just the plain-language answer to "what should I know?" (Phase 5C, Part 7).
+            `buildWeekInsightLines` always ends with the same headline shown above, so that last
+            line is dropped here rather than repeating it. */}
+        {weekInsightLines.length > 1 && (
+          <ul className="mt-3 flex flex-col gap-1 border-t border-border pt-3 text-xs text-ink-muted">
+            {weekInsightLines.slice(0, -1).map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {!activeSession && nextAction.kind === "scheduled" && (
         <div className="mb-6">
-          <NextUpCard action={nextAction} onStart={() => startSession(nextAction.block)} compact />
+          <NextUpCard
+            action={nextAction}
+            onStart={() => startSession(nextAction.block)}
+            compact
+            sourceLabel={
+              nextAction.kind === "scheduled" &&
+              resolveWorkItemForBlock(nextAction.block, workItems, stages)?.source === "google-classroom"
+                ? "Google Classroom"
+                : undefined
+            }
+          />
         </div>
       )}
 
@@ -114,6 +150,25 @@ export default function DashboardPage() {
           )}
         </section>
       </div>
+
+      {courseWorkload.length > 0 && (
+        <section className="mt-6 rounded-lg border border-border bg-surface p-5">
+          <h2 className="text-sm font-semibold text-ink">Course workload</h2>
+          <p className="mb-3 text-xs text-ink-faint">
+            {/* "Busiest" is only ever stated when there are courses to compare — see busiestCourse. */}
+            {busiest
+              ? `${busiest.subject} is currently your busiest course.`
+              : "How your remaining work is split across your courses."}
+          </p>
+          <CourseWorkloadTable
+            breakdown={courseWorkload}
+            workItems={workItems}
+            today={today}
+            dueSoonCutoff={end}
+            concentrationDayBySubject={concentrationDayBySubject}
+          />
+        </section>
+      )}
 
       <section className="mt-6 rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-3 text-sm font-semibold text-ink">Coming up</h2>

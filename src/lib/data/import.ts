@@ -151,6 +151,7 @@ export function normalizeExternalItem(
     externalId: external.externalId,
     externalCourseId: external.externalCourseId,
     externalUrl: external.externalUrl,
+    sourceDescription: external.description,
     sourceUpdatedAt: external.sourceUpdatedAt,
     sourceSnapshot: snapshotOf(external),
   } as NewWorkItemInput;
@@ -210,6 +211,10 @@ export function mergeImportedItem(
   if (incoming.dueDate && incoming.dueDate !== previous.dueDate) patch.dueDate = incoming.dueDate;
   if (incoming.courseName !== previous.courseName) patch.subject = incoming.courseName;
   if (external.externalUrl !== existing.externalUrl) patch.externalUrl = external.externalUrl;
+  // Informational, like the link above — refreshed silently rather than surfaced as a reviewable
+  // "change", the same way a teacher editing the Classroom link isn't something worth interrupting
+  // the student over. Only title, deadline, and course affect planning enough to ask first.
+  if (external.description !== existing.sourceDescription) patch.sourceDescription = external.description;
 
   if (Object.keys(patch).length === 0) return null;
 

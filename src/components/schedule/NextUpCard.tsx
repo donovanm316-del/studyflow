@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { formatMinutesAsHoursMinutes } from "@/scheduling-engine";
 import type { NextBestAction } from "@/lib/next-best-action";
@@ -11,6 +12,12 @@ export interface NextUpCardProps {
   startDisabled?: boolean;
   /** Dashboard's lightweight variant (Phase 4, Part 23) — no reason disclosure, smaller footprint. */
   compact?: boolean;
+  /**
+   * Where the recommended work came from, when it happens to be Classroom (Phase 5C, Part 8) —
+   * purely presentational. The recommendation itself is unchanged: `getNextBestAction` picks the
+   * next block the same way regardless of source, and this label never influences that choice.
+   */
+  sourceLabel?: string;
 }
 
 /**
@@ -18,7 +25,7 @@ export interface NextUpCardProps {
  * Part 22; upgraded in Phase 4.5B, Part 1/2). Presentation-only: the caller decides what "Start"
  * does and whether it's currently allowed.
  */
-export function NextUpCard({ action, onStart, startDisabled, compact }: NextUpCardProps) {
+export function NextUpCard({ action, onStart, startDisabled, compact, sourceLabel }: NextUpCardProps) {
   const [showWhy, setShowWhy] = useState(false);
 
   if (action.kind === "current-session") return null;
@@ -43,7 +50,10 @@ export function NextUpCard({ action, onStart, startDisabled, compact }: NextUpCa
 
       <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-ink">{action.block.title}</p>
+          <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
+            {action.block.title}
+            {sourceLabel && <Badge tone="brand" className="shrink-0">{sourceLabel}</Badge>}
+          </p>
           <p className="text-xs text-ink-muted">
             {action.minutesLabel}
             {action.dueLabel && <> · {action.dueLabel}</>}
