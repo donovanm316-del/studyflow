@@ -33,6 +33,12 @@ export interface TaskRowProps {
    * placeholder as if the student had chosen it.
    */
   needsEstimate?: boolean;
+  /**
+   * True when the due date shown is a target date the student chose, not a deadline Classroom
+   * supplied (Phase 5C, Part 8). Classroom gave no deadline for this item; conflating the two would
+   * make the student's own placeholder look like something their teacher set.
+   */
+  isTargetDate?: boolean;
 }
 
 const statusTone: Record<WorkItemStatus, BadgeTone> = {
@@ -64,6 +70,7 @@ export function TaskRow({
   sourceLabel,
   sourceUrl,
   needsEstimate,
+  isTargetDate,
 }: TaskRowProps) {
   const contextParts: string[] = [];
   if (remainingMinutes != null && remainingMinutes > 0 && remainingMinutes !== estimatedMinutes) {
@@ -101,6 +108,11 @@ export function TaskRow({
           {subject && <span>{subject}</span>}
           {subject && <span aria-hidden>·</span>}
           <span className={urgent ? "font-medium text-danger" : undefined}>{dueLabel}</span>
+          {isTargetDate && (
+            <span className="rounded-full border border-border-strong px-1.5 py-0.5 text-[10px] text-ink-faint">
+              your target, not Classroom&apos;s
+            </span>
+          )}
           <span aria-hidden>·</span>
           {/* A placeholder duration is labelled as one. Presenting it as "30 min" alongside a real
               student-set estimate would make the two indistinguishable. */}

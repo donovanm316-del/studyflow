@@ -8,18 +8,23 @@ import { useAppData } from "@/lib/data/store";
 import { useScheduleInput } from "@/lib/data/useSchedule";
 import { normalizeExternalItem, type ExternalWorkItem } from "@/lib/data/import";
 import {
+  describeCourseFailures,
   externalKey,
   previewSyncImpact,
   reconcileCoursework,
+  summarizeReconcile,
   updatesForAcceptedChanges,
   type ReconciledItem,
   type ReconcileResult,
 } from "@/lib/data/classroom-sync";
-import { classroomErrorMessage, type ExternalCourse } from "@/lib/integrations/google-classroom";
+import { classroomErrorMessage, type ClassroomErrorCode, type ExternalCourse } from "@/lib/integrations/google-classroom";
 import { todayDateOnly } from "@/lib/now";
 import { formatDueLabel } from "@/lib/schedule-format";
 import { addDays, type ScheduleChangeSummary } from "@/scheduling-engine";
 import type { NewWorkItemInput } from "@/lib/data/store";
+
+/** Codes that mean the *authorization* itself is gone, not a transient failure (Part 9). */
+const RECONNECT_CODES: ClassroomErrorCode[] = ["session-expired", "permission-denied"];
 
 /**
  * The Google Classroom sync review.
@@ -53,9 +58,15 @@ export interface ClassroomSyncModalProps {
   onClose: () => void;
   /** Told what actually happened, so Settings can show an honest summary after the modal closes. */
   onApplied: (summary: { imported: number; updated: number; changes: ScheduleChangeSummary }) => void;
+  /**
+   * Told when a fetch failed because Google no longer honors the connection — as opposed to a
+   * transient network or server problem — so Settings can switch to its persistent "Reconnect"
+   * state even after this modal is closed (Part 9).
+   */
+  onAuthError?: (code: ClassroomErrorCode) => void;
 }
 
-export function ClassroomSyncModal({ open, onClose, onApplied }: ClassroomSyncModalProps) {
+export function ClassroomSyncModal({ open, onClose, onApplied, onAuthError }: ClassroomSyncModalProps) {
   const { workItems, classroomCourseIds, applyClassroomSync, setClassroomCourseIds } = useAppData();
   const today = todayDateOnly();
   // Wide enough for the diff below to see a newly-imported item land somewhere, without asking the
@@ -64,6 +75,7 @@ export function ClassroomSyncModal({ open, onClose, onApplied }: ClassroomSyncMo
 
   const [phase, setPhase] = useState<"loading" | "review" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<ClassroomErrorCode | null>(null);
   const [response, setResponse] = useState<CourseWorkResponse | null>(null);
   const [editingCourses, setEditingCourses] = useState(false);
   const [draftCourseIds, setDraftCourseIds] = useState<string[]>(classroomCourseIds);
@@ -76,13 +88,16 @@ export function ClassroomSyncModal({ open, onClose, onApplied }: ClassroomSyncMo
     async (courseIds: string[]) => {
       setPhase("loading");
       setError(null);
+      setErrorCode(null);
       try {
         const params = new URLSearchParams();
         for (const id of courseIds) params.append("courseId", id);
         const res = await fetch(`${API}/coursework?${params.toString()}`, { cache: "no-store" });
         if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { message?: string };
+          const body = (await res.json().catch(() => ({}))) as { error?: ClassroomErrorCode; message?: string };
           setError(body.message ?? classroomErrorMessage("unknown"));
+          setErrorCode(body.error ?? null);
+          if (body.error && RECONNECT_CODES.includes(body.error)) onAuthError?.(body.error);
           setPhase("error");
           return;
         }
@@ -93,7 +108,7 @@ export function ClassroomSyncModal({ open, onClose, onApplied }: ClassroomSyncMo
         setPhase("error");
       }
     },
-    []
+    [onAuthError]
   );
 
   useEffect(() => {
@@ -157,22 +172,56 @@ export function ClassroomSyncModal({ open, onClose, onApplied }: ClassroomSyncMo
 
   return (
     <Modal open={open} onClose={onClose} title="Google Classroom" className="max-w-2xl">
-      {phase === "loading" && <p className="text-sm text-ink-muted">Checking Google Classroom…</p>}
+      {phase === "loading" && <p className="text-sm text-ink-muted">Syncing Classroom…</p>}
 
-      {phase === "error" && (
+      {phase === "error" && errorCode && RECONNECT_CODES.includes(errorCode) ? (
+        // The authorization is gone, not just this request — "Try again" would only fail the same
+        // way, so it's replaced with the one action that actually helps (Part 9).
         <div>
-          <p role="alert" className="rounded-md border border-danger-soft bg-danger-soft px-3 py-2 text-sm text-danger">
-            {error}
+          <p className="mb-1 text-sm font-medium text-ink">StudyFlow can no longer access your Classroom data.</p>
+          <p className="mb-3 text-xs text-ink-faint">
+            Your existing StudyFlow assignments and schedule are still safe — nothing has been changed or deleted.
           </p>
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>Close</Button>
-            <Button onClick={() => void load(classroomCourseIds)}>Try again</Button>
+            <Button onClick={() => window.location.assign(new URL(`${API}/connect`, window.location.origin))}>
+              Reconnect
+            </Button>
           </div>
         </div>
+      ) : (
+        phase === "error" && (
+          <div>
+            <p role="alert" className="rounded-md border border-danger-soft bg-danger-soft px-3 py-2 text-sm text-danger">
+              {error}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" onClick={onClose}>Close</Button>
+              <Button onClick={() => void load(classroomCourseIds)}>Try again</Button>
+            </div>
+          </div>
+        )
       )}
 
       {phase === "review" && result && response && (
         <div className="flex flex-col gap-5">
+          <SyncSummary result={result} />
+
+          {response.failedCourses.length > 0 &&
+            (() => {
+              const failedNames = response.failedCourses.map((c) => c.courseName);
+              const succeededCount = response.courses.filter((c) => !c.failed).length;
+              const message = describeCourseFailures(failedNames, succeededCount);
+              return (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning-soft bg-warning-soft px-3 py-2 text-xs text-warning">
+                  <span>{message}</span>
+                  <Button size="sm" variant="ghost" onClick={() => void load(classroomCourseIds)}>
+                    Retry
+                  </Button>
+                </div>
+              );
+            })()}
+
           <CourseSelection
             allCourses={response.allCourses}
             selectedIds={classroomCourseIds}
@@ -183,7 +232,14 @@ export function ClassroomSyncModal({ open, onClose, onApplied }: ClassroomSyncMo
               setEditingCourses(true);
             }}
             onToggle={(id) =>
-              setDraftCourseIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]))
+              // See ClassroomCourseManager's `toggle` for why an empty ("all") selection must
+              // expand to the full list before removing one, rather than treating absence from an
+              // empty list as already-unselected.
+              setDraftCourseIds((current) => {
+                const base = current.length === 0 ? response!.allCourses.map((c) => c.externalCourseId) : current;
+                const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+                return next.length === response!.allCourses.length ? [] : next;
+              })
             }
             onCancel={() => setEditingCourses(false)}
             onSave={() => {
@@ -192,15 +248,6 @@ export function ClassroomSyncModal({ open, onClose, onApplied }: ClassroomSyncMo
               void load(draftCourseIds);
             }}
           />
-
-          {response.failedCourses.length > 0 && (
-            <div className="rounded-md border border-warning-soft bg-warning-soft px-3 py-2 text-xs text-warning">
-              {/* Named individually: "some courses failed" leaves the student unable to tell whether
-                  the assignment they were looking for is missing or genuinely absent. */}
-              StudyFlow couldn&apos;t read {response.failedCourses.map((c) => c.courseName).join(", ")}. Everything below is
-              from the courses that did load.
-            </div>
-          )}
 
           <Group
             title="New"
@@ -251,13 +298,6 @@ export function ClassroomSyncModal({ open, onClose, onApplied }: ClassroomSyncMo
             </section>
           )}
 
-          {result.unchangedItems.length > 0 && (
-            <p className="text-xs text-ink-faint">
-              {result.unchangedItems.length} item{result.unchangedItems.length === 1 ? "" : "s"} already imported and
-              unchanged.
-            </p>
-          )}
-
           {result.newItems.length === 0 && result.undatedItems.length === 0 && result.changedItems.length === 0 && (
             <p className="text-sm text-ink-muted">Nothing new — StudyFlow is up to date with Google Classroom.</p>
           )}
@@ -271,6 +311,36 @@ export function ClassroomSyncModal({ open, onClose, onApplied }: ClassroomSyncMo
         </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * The concise "Classroom synced" result (Phase 5C, Part 2/4) — a plain readout of
+ * `summarizeReconcile`'s counts, in the same order the groups below appear in.
+ *
+ * Deliberately not interactive: this is the answer to "what happened?", not another decision the
+ * student has to make. "Unchanged" in particular is a count and nothing more — the phase spec is
+ * explicit that the student should never have to review every unchanged item one by one.
+ */
+function SyncSummary({ result }: { result: ReconcileResult }) {
+  const counts = summarizeReconcile(result);
+  const needsAttention = counts.undatedCount;
+
+  return (
+    <div className="rounded-md border border-border bg-paper px-3 py-2">
+      <p className="text-sm font-medium text-ink">Classroom synced</p>
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-ink-muted">
+        <li>{counts.newCount} new</li>
+        <li>{counts.changedCount} changed</li>
+        <li>{counts.unchangedCount} unchanged</li>
+        {counts.disappearedCount > 0 && <li>{counts.disappearedCount} no longer in Classroom</li>}
+      </ul>
+      {needsAttention > 0 && (
+        <p className="mt-1 text-xs text-warning">
+          {needsAttention} assignment{needsAttention === 1 ? "" : "s"} need{needsAttention === 1 ? "s" : ""} a target date.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -424,13 +494,16 @@ function Group({
                 <div className="flex flex-wrap gap-3 pl-6">
                   {requiresDate && (
                     <label className="flex flex-col gap-1 text-xs text-ink-muted">
-                      Target date
+                      Your target date
                       <input
                         type="date"
                         value={choice.targetDate ?? ""}
                         onChange={(e) => onChoice(key, { targetDate: e.target.value })}
                         className="h-9 rounded-md border border-border-strong bg-surface px-2 text-sm text-ink"
                       />
+                      {/* Explicit because it matters for how the engine treats the deadline: this is
+                          a self-set target, not a hard deadline the teacher set (Part 8). */}
+                      <span className="text-ink-faint">Yours to set — not a deadline from your teacher.</span>
                     </label>
                   )}
                   <label className="flex flex-col gap-1 text-xs text-ink-muted">
@@ -516,6 +589,12 @@ function ChangedGroup({
                   </li>
                 ))}
               </ul>
+              {/* Names the two outcomes explicitly, tied to the checkbox above rather than adding a
+                  second control — checked applies the change on Import, unchecked keeps the current
+                  plan exactly as it is (Part 5). */}
+              <p className="mt-1 text-xs text-ink-faint">
+                {selected.has(item.existingId!) ? "Will accept this change." : "Will keep your current plan."}
+              </p>
             </div>
           </li>
         ))}

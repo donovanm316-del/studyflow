@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
 import { DEFAULT_DEADLINE_TIME, formatClockTime, normalizeDeadline, weekdayName } from "@/scheduling-engine";
 
 /** "September 9" — the month/day half of the deadline echo. */
@@ -124,6 +125,23 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
   return (
     <Modal open={open} onClose={onClose} title={isEditing ? "Edit item" : "Add work item"}>
       <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+        {/*
+          Ownership, made explicit rather than left implicit (Phase 5C, Part 6): title/subject/due
+          date are what Classroom told StudyFlow and will be kept in sync automatically; everything
+          below that line is the student's own plan and Classroom can't touch it. Nothing here is
+          locked — the student can still edit any field — this is only about the student never having
+          to wonder "why did StudyFlow change this?" the next time a sync runs.
+        */}
+        {initial?.source === "google-classroom" && (
+          <div className="rounded-md border border-brand-soft bg-brand-soft px-3 py-2 text-xs text-brand-strong">
+            <Badge tone="brand" className="mb-1">From Google Classroom</Badge>
+            <p>
+              Title, class, and due date come from Classroom and update automatically when your teacher changes them.
+              Your estimate, importance, deadline setting, and plan below are yours — Classroom never changes those.
+            </p>
+          </div>
+        )}
+
         {kindOptions.length > 1 && !isEditing && (
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-ink">Type</label>

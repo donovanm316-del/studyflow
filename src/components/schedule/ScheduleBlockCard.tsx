@@ -34,7 +34,13 @@ export function ScheduleBlockCard({ title, timeLabel, kind, status = "planned", 
         className
       )}
     >
-      <div className="flex items-start justify-between gap-2">
+      {/*
+        flex-wrap lets the actions group drop to its own line below the title when the two can't
+        fit side by side — the mobile overflow this guarded against was `actions` being marked
+        shrink-0 while this row couldn't wrap, so a title-plus-buttons combination wider than the
+        viewport had nowhere to go but off the right edge.
+      */}
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col gap-0.5">
           <span
             className={cn(

@@ -298,7 +298,47 @@ identity and never re-offered as new, whatever its status.
 The student chooses which active classes to sync, and the choice is saved with their data — it
 survives reloads, and it survives disconnecting and reconnecting. An empty selection means *all
 active courses*, which is where a newly-connected student starts. It can be changed at any time from
-the sync screen.
+the sync screen, or from Settings via **Manage courses** without starting a sync.
+
+Turning a course off only stops StudyFlow from fetching new updates from it. It does **not** delete
+anything already imported from that course — those items stay exactly as they are, with their
+estimates, sessions, and progress intact.
+
+## The sync result
+
+After a sync, Settings and the review screen both show a plain readout: how many items were new,
+changed, and unchanged, plus how many need a target date. Every number comes from the same
+reconciliation the review screen uses — nothing is estimated or composed to sound complete.
+
+If a course fails, it's named specifically ("Biology couldn't be synced. Your other courses were
+imported successfully.") rather than folded into a generic error, and the review screen offers a
+**Retry**. The courses that did succeed are never discarded because one course failed.
+
+## When the connection itself is broken
+
+If Google no longer honors StudyFlow's authorization — revoked from the student's Google account, or
+expired — Settings switches to a **Reconnect** state instead of repeating a generic error. Sync and
+Check connection are hidden in this state, since retrying either would just fail the same way again;
+only Reconnect is offered. Nothing about the student's assignments, schedule, or history is affected,
+and nothing is retried automatically.
+
+## Ownership, made visible
+
+An imported assignment's edit form shows a small "From Google Classroom" note: title, class, and due
+date are Classroom's and stay in sync automatically; everything else — estimate, importance,
+deadline strictness, preferred start, decomposition, and completion — is the student's, and Classroom
+never touches it. Nothing is locked; the note exists so the student is never left wondering why
+something changed the next time they sync.
+
+An item imported without a Classroom deadline is labeled wherever its due date appears as the
+student's own target, not a deadline from their teacher — the two are never allowed to look the same.
+
+## Filtering by source
+
+The Assignments page has an **All / StudyFlow / Google Classroom** filter, so a student can look at
+just what they typed in themselves or just what came from a class. It's a filter on the existing
+list, not a second view — everything else about the page (editing, decomposition, deadline insight)
+works the same regardless of which tab is active.
 
 ## Performance
 

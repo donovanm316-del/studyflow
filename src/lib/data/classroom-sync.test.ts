@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   actionableCount,
+  describeCourseFailures,
   externalKey,
   previewSyncImpact,
   reconcileCoursework,
+  summarizeReconcile,
   updatesForAcceptedChanges,
 } from "./classroom-sync";
 import { normalizeExternalItem, snapshotOf, type ExternalWorkItem } from "./import";
 import type { NewWorkItemInput } from "./store";
-import type { SchedulableWorkItem } from "@/scheduling-engine";
+import { generateSchedule, weekdayName, type SchedulableWorkItem } from "@/scheduling-engine";
 import { makeAssignment, makePlanningProfile, NOW } from "@/scheduling-engine/__tests__/fixtures";
 
 const TODAY = "2026-08-24";
@@ -274,5 +276,132 @@ describe("schedule impact preview", () => {
 
     expect(withItem.workItems).toHaveLength(1);
     expect(withItem.workItems[0]).toBe(existing);
+  });
+});
+
+describe("summarizeReconcile — the counts behind the sync summary (Phase 5C)", () => {
+  it("tallies each bucket without double counting", () => {
+    const existing = [importImportedForSummary()];
+    const result = reconcile(
+      [
+        coursework({ externalId: "cw-1" }), // matches existing -> unchanged
+        coursework({ externalId: "cw-2", title: "New item" }), // new
+        coursework({ externalId: "cw-3", title: "New, no date", dueDate: undefined }), // undated
+      ],
+      existing
+    );
+
+    expect(summarizeReconcile(result)).toEqual({
+      newCount: 1,
+      changedCount: 0,
+      unchangedCount: 1,
+      undatedCount: 1,
+      disappearedCount: 0,
+    });
+  });
+
+  it("counts a disappeared item", () => {
+    const result = reconcile([], [importedFrom(coursework())]);
+    expect(summarizeReconcile(result).disappearedCount).toBe(1);
+  });
+
+  function importImportedForSummary() {
+    return importedFrom(coursework({ externalId: "cw-1" }));
+  }
+});
+
+describe("describeCourseFailures — naming what didn't sync", () => {
+  it("returns null when nothing failed", () => {
+    expect(describeCourseFailures([], 5)).toBeNull();
+  });
+
+  it("names the one course that failed among several successes", () => {
+    expect(describeCourseFailures(["Biology"], 4)).toBe("Biology couldn't be synced. Your other courses were imported successfully.");
+  });
+
+  it("summarizes with counts when more than one course failed", () => {
+    expect(describeCourseFailures(["Biology", "History"], 4)).toBe(
+      "Classroom partially synced. 4 courses synced successfully. 2 courses couldn't be retrieved."
+    );
+  });
+
+  it("uses singular wording for one success and one failure", () => {
+    expect(describeCourseFailures(["Biology"], 0)).toBe("Biology couldn't be synced, and no other courses were retrieved.");
+  });
+
+  it("has a distinct message when every course failed", () => {
+    expect(describeCourseFailures(["Biology", "History"], 0)).toBe("None of your courses could be synced right now.");
+  });
+});
+
+describe("undated coursework that later gets a real Classroom deadline (Phase 5C, Part 8)", () => {
+  /** What importing an undated item with a student-chosen target date actually produces. */
+  function importedWithTargetDate(): SchedulableWorkItem {
+    const undated = coursework({ dueDate: undefined });
+    const input = normalizeExternalItem(undated, TODAY, { targetDate: "2026-09-12" })!;
+    return {
+      ...input,
+      id: "item-cw-1",
+      userId: "u1",
+      status: "not-started",
+      createdAt: "2026-08-24T08:00",
+      updatedAt: "2026-08-24T08:00",
+    } as SchedulableWorkItem;
+  }
+
+  it("imports against the student's target, recording no source deadline in the baseline", () => {
+    const imported = importedWithTargetDate();
+    expect(imported.dueDate).toBe("2026-09-12T23:59");
+    expect(imported.deadlineStrictness).toBe("target");
+    expect(imported.sourceSnapshot?.dueDate).toBeUndefined();
+  });
+
+  it("is detected as a deadline change, not silently applied", () => {
+    const imported = importedWithTargetDate();
+    const nowDated = coursework({ dueDate: "2026-09-04T15:00" });
+    const result = reconcile([nowDated], [imported]);
+
+    expect(result.changedItems).toHaveLength(1);
+    const change = result.changedItems[0].changes.find((c) => c.field === "deadline")!;
+    expect(change.before).toContain(weekdayName("2026-09-12"));
+    expect(change.after).toContain(weekdayName("2026-09-04"));
+  });
+
+  it("does not overwrite the student's target until the change is accepted", () => {
+    const imported = importedWithTargetDate();
+    const nowDated = coursework({ dueDate: "2026-09-04T15:00" });
+    const result = reconcile([nowDated], [imported]);
+
+    expect(updatesForAcceptedChanges(result, [], [imported])).toEqual([]);
+  });
+});
+
+describe("deselecting a Classroom course (Phase 5C, Part 12)", () => {
+  it("leaves previously imported items from that course completely alone", () => {
+    // Deselecting means "stop fetching updates", not "forget what was already imported" — modeled
+    // here as the course simply not appearing in this sync's succeeded list, exactly like a
+    // deselected course would.
+    const imported = importedFrom(coursework(), { status: "in-progress", actualMinutes: 20, estimatedMinutes: 90 });
+    const result = reconcile([], [imported], []);
+
+    expect(result.disappearedItems).toEqual([]);
+    expect(result.changedItems).toEqual([]);
+    // The function is pure — it never mutates the item it was handed.
+    expect(imported.status).toBe("in-progress");
+    expect(imported.actualMinutes).toBe(20);
+  });
+
+  it("still schedules that work normally", () => {
+    const imported = importedFrom(coursework(), { estimatedMinutes: 60 });
+    const result = generateSchedule({
+      userId: "u1",
+      rangeStart: TODAY,
+      rangeEnd: "2026-08-28",
+      now: NOW,
+      workItems: [imported],
+      commitments: [],
+      planningProfile: makePlanningProfile(),
+    });
+    expect(result.blocks.filter((b) => b.workItemId === imported.id).length).toBeGreaterThan(0);
   });
 });

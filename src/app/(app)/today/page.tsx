@@ -397,7 +397,10 @@ export default function TodayPage() {
                     reason={block.reason}
                     actions={
                       isWork && block.status === "planned" && !isActive ? (
-                        <div className="flex shrink-0 flex-wrap items-center gap-1">
+                        // Full width below `sm` so the three buttons get the whole card to wrap
+                        // within, rather than being squeezed beside the title on a phone; back to
+                        // an inline, right-aligned group once there's room (desktop unchanged).
+                        <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto">
                           <Button size="sm" disabled={!!activeSession} onClick={() => startSession(block)}>
                             Start
                           </Button>

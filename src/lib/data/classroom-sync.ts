@@ -237,6 +237,59 @@ export function actionableCount(result: ReconcileResult): number {
 }
 
 /**
+ * The counts behind the "Classroom synced" summary (Phase 5C, Part 2/4).
+ *
+ * A plain tally over `ReconcileResult` — nothing here is estimated or rounded. Kept as its own
+ * function rather than inlined in a component so the summary shown to the student and the numbers
+ * asserted in tests are provably the same arithmetic.
+ */
+export interface ReconcileSummary {
+  newCount: number;
+  changedCount: number;
+  unchangedCount: number;
+  /** Real coursework with no deadline yet — "needs a target date", not "new". */
+  undatedCount: number;
+  disappearedCount: number;
+}
+
+export function summarizeReconcile(result: ReconcileResult): ReconcileSummary {
+  return {
+    newCount: result.newItems.length,
+    changedCount: result.changedItems.length,
+    unchangedCount: result.unchangedItems.length,
+    undatedCount: result.undatedItems.length,
+    disappearedCount: result.disappearedItems.length,
+  };
+}
+
+/**
+ * The sentence describing which courses failed this sync, or `null` when none did.
+ *
+ * Named courses, not a bare count — "Biology couldn't be synced" tells the student which class to
+ * check back on, where "1 course failed" does not. The three shapes below are all real outcomes,
+ * not the same message with a number swapped in: one failing course among several successes reads
+ * differently from every course failing at once.
+ */
+export function describeCourseFailures(failedCourseNames: string[], succeededCourseCount: number): string | null {
+  if (failedCourseNames.length === 0) return null;
+
+  if (succeededCourseCount === 0) {
+    return failedCourseNames.length === 1
+      ? `${failedCourseNames[0]} couldn't be synced, and no other courses were retrieved.`
+      : "None of your courses could be synced right now.";
+  }
+
+  if (failedCourseNames.length === 1) {
+    return `${failedCourseNames[0]} couldn't be synced. Your other courses were imported successfully.`;
+  }
+
+  return (
+    `Classroom partially synced. ${succeededCourseCount} course${succeededCourseCount === 1 ? "" : "s"} synced ` +
+    `successfully. ${failedCourseNames.length} course${failedCourseNames.length === 1 ? "" : "s"} couldn't be retrieved.`
+  );
+}
+
+/**
  * What this sync would do to the student's schedule, computed before anything is applied.
  *
  * Runs the **existing** scheduler twice — once on the current inputs, once on a throwaway copy with

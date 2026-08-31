@@ -248,3 +248,42 @@ describe("data safety", () => {
     expect(JSON.stringify(input)).not.toContain("no reason to keep");
   });
 });
+
+describe("Phase 5C — UX polish requests no new access", () => {
+  it("still requests exactly the two read-only scopes from Phase 5B — nothing was added", () => {
+    // Phase 5C is explicitly UX-only: no scope, no write access, no new permission.
+    const configSource = readFileSync(join(SRC, "lib/integrations/google-classroom/config.ts"), "utf8");
+    const scopeLines = configSource.match(/https:\/\/www\.googleapis\.com\/auth\/classroom\.[a-z.]+/g) ?? [];
+    expect(new Set(scopeLines)).toEqual(
+      new Set([
+        "https://www.googleapis.com/auth/classroom.courses.readonly",
+        "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+      ])
+    );
+  });
+
+  it("issues no request to Classroom itself that could write — only reads", () => {
+    // GoogleClassroomCard legitimately POSTs to StudyFlow's own /disconnect route to clear the
+    // local session cookie; that's excluded here on purpose, since it never reaches Google's API
+    // and never writes to Classroom. Everything else is read-only.
+    const newFiles = [
+      "components/settings/ClassroomSyncModal.tsx",
+      "components/settings/ClassroomCourseManager.tsx",
+      "components/tasks/EstimateNeededPrompt.tsx",
+    ].map((rel) => readFileSync(join(SRC, rel), "utf8"));
+    for (const text of newFiles) {
+      expect(text).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/);
+    }
+  });
+
+  it("stores no token in localStorage from any Phase 5C component", () => {
+    const newFiles = [
+      "components/settings/ClassroomSyncModal.tsx",
+      "components/settings/ClassroomCourseManager.tsx",
+      "components/settings/GoogleClassroomCard.tsx",
+    ].map((rel) => readFileSync(join(SRC, rel), "utf8"));
+    for (const text of newFiles) {
+      expect(code(text)).not.toContain("localStorage");
+    }
+  });
+});

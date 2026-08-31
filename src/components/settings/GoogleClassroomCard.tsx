@@ -5,9 +5,11 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ClassroomSyncModal } from "@/components/settings/ClassroomSyncModal";
+import { ClassroomCourseManager } from "@/components/settings/ClassroomCourseManager";
+import { ScheduleChangeNotice } from "@/components/schedule/ScheduleChangeNotice";
 import { useAppData } from "@/lib/data/store";
 import { classroomErrorMessage, type ClassroomConnectionStatus, type ClassroomErrorCode } from "@/lib/integrations/google-classroom";
-import type { ScheduleChangeSummary, WorkItemScheduleChange } from "@/scheduling-engine";
+import type { ScheduleChangeSummary } from "@/scheduling-engine";
 
 /**
  * The Google Classroom connection, in Settings.
@@ -18,9 +20,10 @@ import type { ScheduleChangeSummary, WorkItemScheduleChange } from "@/scheduling
  * JavaScript.
  *
  * The states it can show are: still loading, not configured (this deployment has no Google
- * credentials), not connected, connecting, connected, and failed. "Not configured" is a real state
- * with real copy rather than a disabled button, because a student looking at a build without
- * credentials deserves to know why the button won't work.
+ * credentials), not connected, connecting, connected, needs reconnecting (the authorization Google
+ * holds went away), and failed. "Not configured" and "needs reconnecting" are both real states with
+ * real copy rather than a generic error banner, because what the student should do next is
+ * different in each case.
  */
 
 const API = "/api/integrations/google-classroom";
@@ -31,12 +34,8 @@ interface ApiError {
   message?: string;
 }
 
-const SCHEDULE_CHANGE_LABEL: Record<WorkItemScheduleChange["kind"], string> = {
-  added: "Added",
-  removed: "Removed",
-  moved: "Moved",
-  "duration-changed": "Time changed",
-};
+/** Codes that mean the *authorization* itself is gone, not a transient failure — see Part 9. */
+const RECONNECT_CODES: ClassroomErrorCode[] = ["session-expired", "permission-denied"];
 
 /** Reports what actually happened, with both halves named — never a vague "sync complete". */
 function summarizeSync(imported: number, updated: number): string {
@@ -58,11 +57,17 @@ export function GoogleClassroomCard() {
   const [busy, setBusy] = useState<"connecting" | "checking" | "disconnecting" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [needsReconnect, setNeedsReconnect] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [manageCoursesOpen, setManageCoursesOpen] = useState(false);
   const [scheduleChanges, setScheduleChanges] = useState<ScheduleChangeSummary | null>(null);
   const { workItems, classroomCourseIds, classroomLastSyncAt } = useAppData();
-  const importedCount = workItems.filter((item) => item.source === "google-classroom").length;
+  const importedItems = workItems.filter((item) => item.source === "google-classroom");
+  // A real, actionable number: how many of the student's *own* imported items are still sitting on
+  // a placeholder duration. Global rather than scoped to the last sync, because the need doesn't
+  // go away just because the student closed the review screen without setting one (Part 7).
+  const needsEstimateCount = importedItems.filter((item) => item.needsEstimate).length;
 
   const loadStatus = useCallback(async () => {
     try {
@@ -95,6 +100,7 @@ export function GoogleClassroomCard() {
     if (result === "connected") {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the redirect result from the URL, an external source
       setNotice("Google Classroom connected.");
+      setNeedsReconnect(false);
     } else {
       const reason = params.get("reason");
       setError(classroomErrorMessage((reason as ClassroomErrorCode) ?? "unknown"));
@@ -126,9 +132,17 @@ export function GoogleClassroomCard() {
       const response = await fetch(`${API}/courses`, { cache: "no-store" });
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as ApiError;
-        setError(body.message ?? classroomErrorMessage("unknown"));
+        if (body.error && RECONNECT_CODES.includes(body.error)) {
+          // The authorization itself is gone — a generic red error banner would understate it, and
+          // repeating "Check connection" against a revoked grant would just fail the same way again
+          // (Part 9). The reconnect state replaces the usual actions with the one that actually helps.
+          setNeedsReconnect(true);
+        } else {
+          setError(body.message ?? classroomErrorMessage("unknown"));
+        }
       } else {
         const body = (await response.json()) as { courseCount: number };
+        setNeedsReconnect(false);
         setNotice(
           body.courseCount === 0
             ? classroomErrorMessage("no-courses")
@@ -150,6 +164,7 @@ export function GoogleClassroomCard() {
     setNotice(null);
     try {
       await fetch(`${API}/disconnect`, { method: "POST" });
+      setNeedsReconnect(false);
       setNotice("Google Classroom disconnected. Nothing in StudyFlow or in Classroom was deleted.");
       await loadStatus();
     } catch {
@@ -163,7 +178,8 @@ export function GoogleClassroomCard() {
     <section className="rounded-lg border border-border bg-surface p-5">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-ink">Google Classroom</h2>
-        {status?.connected && <Badge tone="success">Connected</Badge>}
+        {status?.connected && !needsReconnect && <Badge tone="success">Connected</Badge>}
+        {needsReconnect && <Badge tone="warning">Reconnect needed</Badge>}
         {status && !status.configured && <Badge tone="neutral">Not set up</Badge>}
       </div>
 
@@ -171,36 +187,36 @@ export function GoogleClassroomCard() {
         <p className="text-xs text-ink-faint">Checking connection…</p>
       ) : !status.configured ? (
         <UnconfiguredState missing={status.missingConfig} />
+      ) : needsReconnect ? (
+        <ReconnectState />
       ) : status.connected ? (
         <ConnectedState
           status={status}
           courseSelectionLabel={classroomCourseIds.length === 0 ? "All active courses" : `${classroomCourseIds.length} selected`}
           lastSyncAt={classroomLastSyncAt}
-          importedCount={importedCount}
+          importedCount={importedItems.length}
+          needsEstimateCount={needsEstimateCount}
+          onManageCourses={() => setManageCoursesOpen(true)}
         />
       ) : (
         <NotConnectedState />
+      )}
+
+      {status?.configured && (
+        <p className="mt-2 text-xs text-ink-faint">
+          <span className="font-medium text-ink-muted">Read-only connection.</span> StudyFlow can read your selected
+          Classroom courses and coursework. It cannot change or submit anything in Google Classroom.
+        </p>
       )}
 
       {notice && (
         <p className="mt-3 rounded-md border border-brand-soft bg-brand-soft px-3 py-2 text-xs text-brand-strong">{notice}</p>
       )}
 
-      {scheduleChanges && scheduleChanges.changes.length > 0 && (
-        // Real engine output — the same diff the rest of the app uses. Nothing here is composed to
-        // sound plausible.
-        <div className="mt-3 rounded-md border border-border bg-paper px-3 py-2">
-          <p className="mb-1 text-xs font-medium text-ink">Your schedule was updated</p>
-          <ul className="flex flex-col gap-0.5 text-xs text-ink-muted">
-            {scheduleChanges.changes.slice(0, 6).map((change) => (
-              <li key={change.workItemId} className="break-words">
-                {SCHEDULE_CHANGE_LABEL[change.kind]} · {change.title}
-                {change.after && <span className="text-ink-faint"> → {change.after}</span>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* Real engine output — the same diff the rest of the app uses. Nothing here is composed to
+          sound plausible, and it says so explicitly even when nothing changed (Part 13). */}
+      {scheduleChanges && <ScheduleChangeNotice summary={scheduleChanges} />}
+
       {error && (
         <p role="alert" className="mt-3 rounded-md border border-danger-soft bg-danger-soft px-3 py-2 text-xs text-danger">
           {error}
@@ -209,7 +225,11 @@ export function GoogleClassroomCard() {
 
       {status?.configured && (
         <div className="mt-4 flex flex-wrap gap-2">
-          {status.connected ? (
+          {needsReconnect ? (
+            <Button size="sm" onClick={connect} disabled={busy !== null}>
+              {busy === "connecting" ? "Opening Google…" : "Reconnect"}
+            </Button>
+          ) : status.connected ? (
             <>
               <Button size="sm" onClick={() => setSyncOpen(true)} disabled={busy !== null}>
                 Sync now
@@ -238,8 +258,13 @@ export function GoogleClassroomCard() {
             setScheduleChanges(changes);
             setNotice(summarizeSync(imported, updated));
           }}
+          onAuthError={(code) => {
+            if (RECONNECT_CODES.includes(code)) setNeedsReconnect(true);
+          }}
         />
       )}
+
+      {manageCoursesOpen && <ClassroomCourseManager open onClose={() => setManageCoursesOpen(false)} />}
 
       <ConfirmDialog
         open={confirmDisconnect}
@@ -291,6 +316,26 @@ function NotConnectedState() {
 }
 
 /**
+ * Shown when Google no longer honors StudyFlow's authorization — revoked from the student's Google
+ * account, or expired (Phase 5C, Part 9).
+ *
+ * The one thing this state exists to say plainly: nothing in the student's planner was touched.
+ * Sync and Check connection are both hidden here rather than left active — retrying either would
+ * just fail the same way again, since the problem is the authorization itself, not the request.
+ */
+function ReconnectState() {
+  return (
+    <div className="text-xs text-ink-muted">
+      <p className="mb-2 font-medium text-ink">StudyFlow can no longer access your Classroom data.</p>
+      <p className="text-ink-faint">
+        Your existing StudyFlow assignments and schedule are still safe — nothing has been changed or deleted.
+        Reconnecting restores the connection; nothing else needs to happen first.
+      </p>
+    </div>
+  );
+}
+
+/**
  * The connected view.
  *
  * Everything here is a fact the server actually recorded. There is no account name, because
@@ -303,11 +348,15 @@ function ConnectedState({
   courseSelectionLabel,
   lastSyncAt,
   importedCount,
+  needsEstimateCount,
+  onManageCourses,
 }: {
   status: ClassroomConnectionStatus;
   courseSelectionLabel: string;
   lastSyncAt?: string;
   importedCount: number;
+  needsEstimateCount: number;
+  onManageCourses: () => void;
 }) {
   return (
     <div className="text-xs text-ink-muted">
@@ -316,7 +365,13 @@ function ConnectedState({
         what you choose during a sync.
       </p>
       <dl className="flex flex-col gap-1 text-ink-faint">
-        <Row label="Syncing" value={courseSelectionLabel} />
+        <div className="flex flex-wrap items-center gap-2">
+          <dt>Syncing</dt>
+          <dd className="text-ink-muted">{courseSelectionLabel}</dd>
+          <button onClick={onManageCourses} className="text-brand-strong underline underline-offset-2 hover:opacity-80">
+            Manage courses
+          </button>
+        </div>
         {status.courseCount !== undefined && <Row label="Classes found" value={String(status.courseCount)} />}
         {lastSyncAt && <Row label="Last sync" value={formatTimestamp(lastSyncAt)} />}
         {status.lastCheckedAt && <Row label="Last checked" value={formatTimestamp(status.lastCheckedAt)} />}
@@ -325,6 +380,12 @@ function ConnectedState({
             reports StudyFlow's state, and doesn't try to be a second Classroom dashboard. */}
         {importedCount > 0 && <Row label="Imported into StudyFlow" value={String(importedCount)} />}
       </dl>
+      {needsEstimateCount > 0 && (
+        <p className="mt-2 text-warning">
+          {needsEstimateCount} imported {needsEstimateCount === 1 ? "item" : "items"} still {needsEstimateCount === 1 ? "needs" : "need"} an
+          estimate — see Assignments.
+        </p>
+      )}
     </div>
   );
 }
