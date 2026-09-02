@@ -65,12 +65,19 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
   // Undefined on an existing item means "yes" — the Phase 4.5C behavior — so it maps to true here.
   const [usePersonalized, setUsePersonalized] = useState(initial?.usePersonalizedEstimate !== false);
   const [preferredStartDate, setPreferredStartDate] = useState(initial?.preferredStartDate ?? "");
-  const [estimatedMinutes, setEstimatedMinutes] = useState(initial?.estimatedMinutes ?? 30);
+  // A string, not a number (Phase 5D, Part 13): a controlled `type="number"` input bound to a
+  // numeric 0 re-renders showing "0" the instant the field is cleared, since `Number("") === 0` —
+  // trapping the student behind a digit they have to delete before they can type their own. Empty
+  // stays empty here until they actually type something; existing items keep their real value.
+  const [estimatedMinutesInput, setEstimatedMinutesInput] = useState(
+    initial?.estimatedMinutes != null ? String(initial.estimatedMinutes) : ""
+  );
   const [weight, setWeight] = useState<AssignmentWeight>(initial?.weight ?? "medium");
   const [deadlineStrictness, setDeadlineStrictness] = useState<DeadlineStrictness>(initial?.deadlineStrictness ?? "hard");
   const [rigor, setRigor] = useState<CourseRigor>(initial?.rigor ?? defaultRigor ?? "grade_level");
   const [titleError, setTitleError] = useState<string | undefined>();
   const [dueDateError, setDueDateError] = useState<string | undefined>();
+  const [estimateError, setEstimateError] = useState<string | undefined>();
 
   const workTypeOptions = WORK_TYPE_OPTIONS_BY_KIND[kind];
   const [workType, setWorkType] = useState<WorkType>(initial?.workType ?? workTypeOptions[0].value);
@@ -90,6 +97,13 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
       hasError = true;
     } else {
       setDueDateError(undefined);
+    }
+    const estimatedMinutes = estimatedMinutesInput.trim() === "" ? NaN : Number(estimatedMinutesInput);
+    if (!Number.isFinite(estimatedMinutes) || estimatedMinutes <= 0) {
+      setEstimateError("Enter how long you think this will take.");
+      hasError = true;
+    } else {
+      setEstimateError(undefined);
     }
     if (hasError) return;
 
@@ -205,9 +219,11 @@ export function WorkItemModal({ open, onClose, onSubmit, kindOptions, initial, d
           type="number"
           min={5}
           step={5}
-          value={estimatedMinutes}
-          onChange={(e) => setEstimatedMinutes(Number(e.target.value))}
-          hint="Your own estimate. StudyFlow keeps this even if it plans differently."
+          placeholder="e.g. 45"
+          value={estimatedMinutesInput}
+          onChange={(e) => setEstimatedMinutesInput(e.target.value)}
+          error={estimateError}
+          hint={estimateError ? undefined : "Your own estimate. StudyFlow keeps this even if it plans differently."}
         />
 
         <div className="flex items-start gap-2">

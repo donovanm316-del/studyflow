@@ -13,7 +13,7 @@ export {
   calculateBreakPreferenceAdjustment,
   calculateFreeTimePriorityAdjustment,
 } from "./capacity";
-export { findAvailableWindows, subtractIntervals } from "./availability";
+export { findAvailableWindows, subtractIntervals, clipWindowsToNow } from "./availability";
 export { splitTask, sessionBounds, isSplittableWorkType } from "./splitting";
 export { calculateWorkloadStatus } from "./workload-status";
 export { explainScheduleDecision } from "./explanation";

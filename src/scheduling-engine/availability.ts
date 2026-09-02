@@ -73,6 +73,18 @@ function minutesOfDayFromTimeValue(value: string): number {
   return minutesOfDay(timePart);
 }
 
+/**
+ * Removes any time before `nowMinute` from a set of windows (Phase 5D, Part 1/3/7) — applied only
+ * to *today*'s windows before placement, so the engine can never place new work earlier than the
+ * current moment, on a fresh generation or an explicit "adjust my schedule" replan alike. A window
+ * left too short to hold a real session once clipped is dropped rather than kept as a sliver.
+ */
+export function clipWindowsToNow(windows: TimeWindow[], nowMinute: number): TimeWindow[] {
+  return windows
+    .map((w) => ({ startMinute: Math.max(w.startMinute, nowMinute), endMinute: w.endMinute }))
+    .filter((w) => w.endMinute - w.startMinute >= MIN_CHUNK_MINUTES);
+}
+
 /** Subtracts a set of busy intervals from a single window, returning the remaining free windows. */
 export function subtractIntervals(window: TimeWindow, busy: TimeWindow[]): TimeWindow[] {
   const sorted = [...busy]

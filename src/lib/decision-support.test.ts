@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   bestUseOfTime,
   buildDayHealth,
+  buildEarlyFinishSummary,
   buildWhyNow,
   freeMinutesToday,
   previewMove,
@@ -372,11 +373,12 @@ describe("free time protection (Part 11)", () => {
     const morning = generateSchedule(buildInput([item]));
     const evening = generateSchedule(buildInput([item], { now: "2026-08-24T19:00" }));
 
-    // The window is 15:00-21:00 (360 min); by 19:00 only 120 of those minutes are left.
-    // The session itself was placed at the start of the window, so by 19:00 it's in the past and
-    // no longer claims any remaining time — the whole 120 minutes are genuinely free.
+    // The window is 15:00-21:00 (360 min); by 19:00 only 120 of those minutes are left. The engine
+    // never places new work before "now" (Phase 5D, Part 1), so the 60-minute session lands inside
+    // the remaining 19:00-21:00 window rather than sitting stale back at 15:00 — leaving 60 of the
+    // 120 remaining minutes genuinely free, not the full 120.
     expect(freeMinutesToday(evening)).toBeLessThan(freeMinutesToday(morning));
-    expect(freeMinutesToday(evening)).toBe(120);
+    expect(freeMinutesToday(evening)).toBe(60);
   });
 
   it("reports no free time once the availability window has closed", () => {
@@ -454,5 +456,84 @@ describe("test-prep buffer reflects the real exam time", () => {
     expect(morningResult.deadlineCapacities[morning.id].availableMinutes).toBeLessThan(
       afternoonResult.deadlineCapacities[afternoon.id].availableMinutes
     );
+  });
+});
+
+describe("Phase 5D, Scenarios B/C/D — finishing a session early", () => {
+  it("says nothing at all for a trivially small gap (Part 18: no noise)", () => {
+    const result = generateSchedule(buildInput([]));
+    expect(buildEarlyFinishSummary(60, 58, result, [], [], NOW, "medium")).toBeNull();
+  });
+
+  it("returns null when there was no planned duration to compare against", () => {
+    const result = generateSchedule(buildInput([]));
+    expect(buildEarlyFinishSummary(null, 20, result, [], [], NOW, "medium")).toBeNull();
+  });
+
+  it("Scenario C — caught up: keeps the freed time free and suggests nothing", () => {
+    const result = generateSchedule(buildInput([])); // no work at all → caughtUp
+    expect(result.caughtUp).toBe(true);
+    const summary = buildEarlyFinishSummary(60, 35, result, [], [], NOW, "medium");
+    expect(summary?.suggestion).toBeNull();
+    expect(summary?.detail).toMatch(/keep the time free/i);
+    expect(summary?.freedMinutes).toBe(25);
+  });
+
+  it("respects a high free-time priority even when not caught up", () => {
+    // Narrow, single-day range with more work than fits — genuinely not caught up.
+    const items = [
+      makeAssignment({ dueDate: "2026-08-24T23:59", estimatedMinutes: 400, deadlineStrictness: "flexible" }),
+      makeTest({ dueDate: "2026-08-24T23:59", estimatedMinutes: 400, deadlineStrictness: "hard" }),
+    ];
+    const result = generateSchedule(
+      buildInput(items, { rangeStart: "2026-08-24", rangeEnd: "2026-08-24" }, makePlanningProfile({ freeTimePriority: "high" }))
+    );
+    expect(result.caughtUp).toBe(false);
+    const summary = buildEarlyFinishSummary(60, 35, result, items, [], NOW, "high");
+    expect(summary?.suggestion).toBeNull();
+    expect(summary?.detail).toMatch(/keep the time free/i);
+  });
+
+  it("Scenario D — behind: offers a real already-placed session that fits the freed window", () => {
+    // A big flexible item overflows the single-day range (genuinely not caught up), while a small,
+    // higher-priority item still gets placed and is small enough to fit a 25-minute freed window.
+    const small = makeAssignment({
+      title: "History reading",
+      dueDate: "2026-08-24T23:59",
+      estimatedMinutes: 20,
+      deadlineStrictness: "hard",
+      weight: "high",
+    });
+    const big = makeAssignment({
+      title: "Big project",
+      dueDate: "2026-08-24T23:59",
+      estimatedMinutes: 400,
+      deadlineStrictness: "flexible",
+    });
+    const result = generateSchedule(buildInput([small, big], { rangeStart: "2026-08-24", rangeEnd: "2026-08-24" }));
+    expect(result.caughtUp).toBe(false);
+
+    const summary = buildEarlyFinishSummary(60, 35, result, [small, big], [], NOW, "medium");
+    expect(summary?.suggestion).not.toBeNull();
+    expect(summary?.suggestion?.block.workItemId).toBe(small.id);
+    expect(summary?.detail).toContain("History reading");
+  });
+
+  it("never invents work when nothing real fits the freed window", () => {
+    // A single large, unsplittable, already-placed item overflows a single day (not caught up),
+    // but its own session chunks are far bigger than a tiny 15-minute freed window — nothing fits.
+    const big = makeAssignment({
+      title: "Big project",
+      dueDate: "2026-08-24T23:59",
+      estimatedMinutes: 600,
+      deadlineStrictness: "important",
+      workType: "homework",
+      splittable: false,
+    });
+    const result = generateSchedule(buildInput([big], { rangeStart: "2026-08-24", rangeEnd: "2026-08-24" }));
+    expect(result.caughtUp).toBe(false);
+    const summary = buildEarlyFinishSummary(20, 5, result, [big], [], NOW, "medium");
+    expect(summary?.suggestion).toBeNull();
+    expect(summary?.detail).toMatch(/nothing else fits/i);
   });
 });

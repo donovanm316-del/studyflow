@@ -58,7 +58,11 @@ export function StageManager({ item, stages, onAccept, onClear, onUpdateStage, o
         />
         <AddStageForm onAdd={(title, minutes) => setDraft([...draftStages, makeDraftStage(item.id, draftStages.length, title, minutes)])} />
         <div className="mt-1 flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => { onAccept(draftStages); setExpanded(false); setDraft(null); }} disabled={draftStages.length === 0}>
+          <Button
+            size="sm"
+            onClick={() => { onAccept(draftStages); setExpanded(false); setDraft(null); }}
+            disabled={draftStages.length === 0 || draftStages.some((s) => s.estimatedMinutes <= 0)}
+          >
             Use these stages
           </Button>
           <Button size="sm" variant="ghost" onClick={() => { setExpanded(false); setDraft(null); }}>
@@ -188,6 +192,7 @@ function CommittedStageList({
               />
               <Button
                 size="sm"
+                disabled={editMinutes <= 0}
                 onClick={() => {
                   onUpdateStage(stage.id, { title: editTitle.trim() || stage.title, estimatedMinutes: editMinutes });
                   setEditingId(null);
@@ -267,6 +272,7 @@ function AddStageForm({ onAdd }: { onAdd: (title: string, minutes: number) => vo
       />
       <Button
         size="sm"
+        disabled={minutes <= 0}
         onClick={() => {
           const trimmed = title.trim();
           if (!trimmed) return;

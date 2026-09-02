@@ -11,6 +11,39 @@
  * shared per-day availability/capacity ledger as chunks land so lower-priority items see less
  * room. No randomness, no clock reads beyond the `now` the caller supplies — same inputs always
  * produce the same output.
+ *
+ * Adaptive planning rules (Phase 5D, Part 16) — the invariants that make a re-run of this same
+ * function behave like a real adjustment to reality rather than a fresh guess each time:
+ *
+ *  1. Never schedule in the past — today's placement window starts at `now`, not at the day's
+ *     configured earliest availability (`clipWindowsToNow`, applied only to today).
+ *  2. Completed work stays completed — filtered out via `notCompleted` before anything else runs.
+ *  3. Active/in-progress work is never re-offered elsewhere — the caller excludes it from what it
+ *     asks this function to place.
+ *  4. Manual overrides are respected when possible — held fixed via `preservedBlocks`, never moved
+ *     or resized by a regeneration; still counted against the item's remaining work either way.
+ *  5. Current availability outranks historical availability — every call plans from `now` forward
+ *     over the day's *current* windows, never a snapshot taken earlier.
+ *  6. Exact deadlines are authoritative — `deadlineCap` clips a session to end before the deadline
+ *     instant, not just somewhere on the deadline's calendar day.
+ *  7. Hard/important deadlines are protected under pressure — `hardDeadlineWarning` reports rather
+ *     than silently drops them, and urgent items are placed first (`URGENT_PROTECTION_HORIZON_DAYS`).
+ *  8. Flexible/target work yields first when capacity is tight — it sorts behind protected work in
+ *     the placement order and is what `detectOverload` suggests moving.
+ *  9. Free-time preference shapes whether newly available time gets filled — never automatically in
+ *     this module; see the decision-support layer, which only ever suggests, never auto-schedules.
+ * 10. Being caught up protects free time — `caughtUp` and `freeMinutesRemainingToday` exist so
+ *     callers can tell "nothing to do" from "nothing scheduled yet".
+ * 11. Early completion creates real available time — recorded actual-vs-planned minutes reduce an
+ *     item's remaining work (`remainingOf`), which is what frees room on the next regeneration.
+ * 12. Late starts reduce available planning time — a later `now` means a smaller clipped window,
+ *     which is the entire mechanism; there is no separate "catch-up" code path.
+ * 13. Lost time is never recovered by exceeding workload preference — `dailyCapacityMinutes` comes
+ *     from the Planning Profile and is not widened just because less of the day remains.
+ * 14. No invented work — every block traces back to a real work item's real remaining minutes;
+ *     nothing here pads a light day with busywork.
+ * 15. Every automatic change is explainable — `explainScheduleDecision`/`explainPriority` produce
+ *     the "why" for anything placed, from data this same result already computed.
  */
 import {
   BREAK_LENGTH_MINUTES,
@@ -20,7 +53,7 @@ import {
   WORK_AHEAD_HORIZON_DAYS,
 } from "./constants";
 import { calculateDailyCapacity, calculateFeedbackAdjustment } from "./capacity";
-import { findAvailableWindows, subtractIntervals, type TimeWindow } from "./availability";
+import { clipWindowsToNow, findAvailableWindows, subtractIntervals, type TimeWindow } from "./availability";
 import { calculatePriority, explainPriority } from "./priority";
 import { explainScheduleDecision } from "./explanation";
 import { nextEligibleStage } from "./decomposition";
@@ -80,6 +113,9 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
   );
 
   const today = toDateOnly(now);
+  // Phase 5D, Part 1/3/7: hoisted so both day-state construction (below) and the free-time figure
+  // (further down) agree on the same "current moment", rather than each computing it separately.
+  const nowMinuteOfDay = minutesOfDay(now.split("T")[1] ?? "00:00");
   const notCompleted = input.workItems.filter((item) => item.status !== "completed");
 
   // Phase 4: a work item with decomposed stages is never itself schedulable — only its single
@@ -163,10 +199,12 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
 
   const dayState = new Map<string, DayState>();
   for (const date of dates) {
-    dayState.set(date, {
-      windows: findAvailableWindows(date, planningProfile, commitments, existingBlocks),
-      capacityRemaining: dailyCapacityMinutes,
-    });
+    const rawWindows = findAvailableWindows(date, planningProfile, commitments, existingBlocks);
+    // Today's windows never include time already past — this is what keeps a fresh generation (or
+    // an explicit replan) from ever placing new work before the current moment (Part 1/3/7). Other
+    // days are untouched: there is no "now" to clip against on a day that hasn't started yet.
+    const windows = date === today ? clipWindowsToNow(rawWindows, nowMinuteOfDay) : rawWindows;
+    dayState.set(date, { windows, capacityRemaining: dailyCapacityMinutes });
   }
 
   // Priorities are computed for every not-yet-completed item (in and out of range) so callers
@@ -406,7 +444,6 @@ export function generateSchedule(input: GenerateScheduleInput): GenerateSchedule
   // Real free time left today: usable availability from now to end of day (commitments and fixed
   // blocks already removed by `calculateAvailableMinutesBeforeDeadline`), minus the work this pass
   // still has ahead of the current moment.
-  const nowMinuteOfDay = minutesOfDay(now.split("T")[1] ?? "00:00");
   const workAheadTodayMinutes = newBlocks
     .filter((b) => b.workItemId && toDateOnly(b.start) === today && minutesOfDay(b.end.split("T")[1]) > nowMinuteOfDay)
     .reduce((sum, b) => sum + blockDurationMinutes(b.start, b.end), 0);

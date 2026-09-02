@@ -14,8 +14,10 @@ import { useSchedule, useScheduleInput } from "@/lib/data/useSchedule";
 import { blockCardKind, formatTimeRange, resolveWorkItemForBlock } from "@/lib/schedule-format";
 import { currentWeekRange, todayDateOnly } from "@/lib/now";
 import { nowLocalIso } from "@/lib/now";
+import { useLiveNow } from "@/lib/useLiveNow";
+import { detectStaleness } from "@/lib/schedule-freshness";
 import { getNextBestAction } from "@/lib/next-best-action";
-import { bestUseOfTime, previewMove, type MovePreview, type TimeSuggestion } from "@/lib/decision-support";
+import { bestUseOfTime, buildEarlyFinishSummary, previewMove, type MovePreview, type TimeSuggestion } from "@/lib/decision-support";
 import {
   diffSchedules,
   formatMinutesAsHoursMinutes,
@@ -53,8 +55,12 @@ export default function TodayPage() {
   // legitimately start today on something due later this week — a 1-day range would only ever
   // surface work whose due date is today or already overdue.
   const { start, end } = currentWeekRange();
-  const scheduleInput = useScheduleInput(start, end);
-  const result = useSchedule(start, end);
+  // Bumping this forces `useScheduleInput` to re-read the clock even when nothing else in the
+  // store changed — the mechanism behind "Adjust my schedule" (Phase 5D, Part 2/7/18). Wall-clock
+  // time passing on its own does not bump it, so the displayed plan stays stable while idle.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const scheduleInput = useScheduleInput(start, end, refreshKey);
+  const result = useSchedule(start, end, refreshKey);
   const {
     planningProfile,
     workItems,
@@ -90,6 +96,10 @@ export default function TodayPage() {
   // "N min so far" display live (refreshed every 30s) without the render function itself being
   // impure. `elapsedMinutesRef` (via callback below) is only ever read from event handlers.
   const [liveElapsedMinutes, setLiveElapsedMinutes] = useState(0);
+  // A separately ticking clock, used only to detect staleness (Part 2) and to flag a block whose
+  // time has already passed (Part 1) — never fed into the schedule computation itself, which would
+  // reshuffle placements by a minute on every tick (Part 18).
+  const liveNow = useLiveNow();
 
   useEffect(() => {
     if (!activeSession) return;
@@ -100,6 +110,7 @@ export default function TodayPage() {
   }, [activeSession]);
 
   const todaysBlocks = result.blocks.filter((b) => b.start.slice(0, 10) === today && b.status !== "skipped");
+  const staleness = useMemo(() => detectStaleness(todaysBlocks, liveNow), [todaysBlocks, liveNow]);
 
   const dow = (() => {
     const [y, m, d] = today.split("-").map(Number);
@@ -148,6 +159,18 @@ export default function TodayPage() {
     replanRemainingToday(block);
     closeChooser();
     setReplanNotice("Your remaining schedule for today has been recalculated.");
+  }
+
+  /**
+   * "Adjust my schedule" (Part 2/7): forces a fresh `generateSchedule` call from the *current*
+   * clock rather than whatever moment the last render happened to compute from. Nothing about a
+   * completed/skipped/manually-moved block changes — only which windows are still open to place
+   * remaining work into, per the engine's own now-aware placement (Part 1/3).
+   */
+  function adjustSchedule() {
+    setDiffBaseline(result.blocks);
+    setRefreshKey((k) => k + 1);
+    setReplanNotice("Adjusted your schedule to the current time.");
   }
 
   /**
@@ -204,6 +227,22 @@ export default function TodayPage() {
   // the schedule or active session actually changes, not on every render.
   const nextAction = useMemo(() => getNextBestAction(result, activeSession, nowLocalIso()), [result, activeSession]);
 
+  // What to say (and optionally offer) right after a session finishes early (Part 4/5) — reads the
+  // schedule the same way "I have N minutes" already does, never invents work, and says nothing at
+  // all once the gap is too small to matter.
+  const earlyFinish = useMemo(() => {
+    if (!justCompleted) return null;
+    return buildEarlyFinishSummary(
+      justCompleted.planned,
+      justCompleted.actual,
+      result,
+      workItems,
+      stages,
+      nowLocalIso(),
+      planningProfile.freeTimePriority
+    );
+  }, [justCompleted, result, workItems, stages, planningProfile.freeTimePriority]);
+
   return (
     <div>
       <PageHeader title="Today" description="Your day, as a timeline — fixed commitments, work sessions, breaks, and free time." />
@@ -217,6 +256,22 @@ export default function TodayPage() {
           {w.message}
         </div>
       ))}
+
+      {staleness.freshness === "stale" && !replanNotice && (
+        <div className="mb-4 rounded-md border border-warning-soft bg-warning-soft px-4 py-3 text-sm text-warning">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-medium">Your schedule needs an update.</p>
+              {staleness.reasons.map((reason) => (
+                <p key={reason} className="mt-0.5 text-xs">{reason}</p>
+              ))}
+            </div>
+            <Button size="sm" variant="secondary" onClick={adjustSchedule}>
+              Adjust my schedule
+            </Button>
+          </div>
+        </div>
+      )}
 
       {replanNotice && (
         <div className="mb-4 rounded-md border border-brand-soft bg-brand-soft px-4 py-3 text-sm text-brand-strong">
@@ -289,6 +344,39 @@ export default function TodayPage() {
                 You took {justCompleted.actual} minutes against a {justCompleted.planned}-minute plan — recorded, and
                 it will inform future estimates for similar work.
               </p>
+            )}
+            {earlyFinish && (
+              <div className="mt-2 rounded-md border border-success-soft bg-surface px-3 py-2">
+                <p className="text-xs font-medium text-ink">{earlyFinish.headline}</p>
+                <p className="mt-0.5 text-xs text-ink-muted">{earlyFinish.detail}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {earlyFinish.suggestion && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        startSession(earlyFinish.suggestion!.block);
+                        setJustCompleted(null);
+                      }}
+                    >
+                      Start &ldquo;{earlyFinish.suggestion.block.title}&rdquo;
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => setJustCompleted(null)}>
+                    Keep as free time
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      adjustSchedule();
+                      setJustCompleted(null);
+                    }}
+                  >
+                    Replan today
+                  </Button>
+                </div>
+              </div>
             )}
             <p className="mt-0.5">
               {nextAction.kind === "scheduled" ? (
@@ -395,6 +483,10 @@ export default function TodayPage() {
               const isChoosing = chooserBlockId === block.id;
               const explanation = block.workItemId ? result.decisionExplanations[block.workItemId] : undefined;
               const isWhyExpanded = expandedWhyId === block.id;
+              // Honest, non-destructive representation of a planned block whose time has already
+              // gone by (Part 1/8) — still fully actionable (starting late is welcome, never
+              // punished), just no longer labeled as if it were still upcoming.
+              const isMissed = isWork && block.status === "planned" && block.end <= liveNow;
 
               return (
                 <div key={block.id} className="flex flex-col gap-2">
@@ -404,6 +496,7 @@ export default function TodayPage() {
                     kind={blockCardKind(block)}
                     status={block.status}
                     reason={block.reason}
+                    badge={isMissed ? { label: "Missed", tone: "warning" } : undefined}
                     actions={
                       isWork && block.status === "planned" && !isActive ? (
                         // Full width below `sm` so the three buttons get the whole card to wrap
@@ -481,7 +574,9 @@ export default function TodayPage() {
             value={completion.minutes}
             onChange={(e) => setCompletion({ ...completion, minutes: Number(e.target.value) })}
           />
-          <Button onClick={confirmMinutes}>Continue</Button>
+          <Button onClick={confirmMinutes} disabled={!completion.minutes || completion.minutes <= 0}>
+            Continue
+          </Button>
           <Button variant="ghost" onClick={() => setCompletion(null)}>Cancel</Button>
         </div>
       )}

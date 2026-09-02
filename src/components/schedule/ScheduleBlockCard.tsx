@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
 
 export interface ScheduleBlockCardProps {
   title: string;
@@ -7,6 +8,11 @@ export interface ScheduleBlockCardProps {
   status?: "planned" | "completed" | "skipped";
   /** Short explanation of why this was scheduled here (from `explainPriority`), shown as a subtitle. */
   reason?: string;
+  /**
+   * A small honest status flag next to the title — e.g. "Missed" for a still-`planned` block whose
+   * time has already passed (Phase 5D, Part 1/8). Text-and-tone, never color alone (Part 22).
+   */
+  badge?: { label: string; tone: BadgeTone };
   /** Action buttons (mark done, skip, etc.) — the card stays presentation-only, actions are owned by the page. */
   actions?: React.ReactNode;
   className?: string;
@@ -23,7 +29,7 @@ const kindClasses: Record<ScheduleBlockCardProps["kind"], string> = {
 };
 
 /** A single scheduled block, as placed by the scheduling engine. */
-export function ScheduleBlockCard({ title, timeLabel, kind, status = "planned", reason, actions, className }: ScheduleBlockCardProps) {
+export function ScheduleBlockCard({ title, timeLabel, kind, status = "planned", reason, badge, actions, className }: ScheduleBlockCardProps) {
   return (
     <div
       className={cn(
@@ -42,14 +48,17 @@ export function ScheduleBlockCard({ title, timeLabel, kind, status = "planned", 
       */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col gap-0.5">
-          <span
-            className={cn(
-              "text-sm font-medium text-ink",
-              status === "completed" && "line-through",
-              kind === "free" && "italic text-ink-faint"
-            )}
-          >
-            {title}
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={cn(
+                "text-sm font-medium text-ink",
+                status === "completed" && "line-through",
+                kind === "free" && "italic text-ink-faint"
+              )}
+            >
+              {title}
+            </span>
+            {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
           </span>
           <span className="text-xs text-ink-muted">{timeLabel}</span>
         </div>

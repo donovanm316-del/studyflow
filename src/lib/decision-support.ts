@@ -23,7 +23,7 @@ import {
   type ScheduleChangeSummary,
 } from "@/scheduling-engine";
 import { fixedBlocksAfterMove, fixedBlocksAfterReplanToday } from "@/lib/schedule-mutations";
-import type { ScheduleBlock, WorkStage } from "@/types/models";
+import type { FreeTimePriority, ScheduleBlock, WorkStage } from "@/types/models";
 
 /** Minimum minutes of work below which a "best time to start" recommendation isn't worth showing. */
 export const START_RECOMMENDATION_MIN_MINUTES = 120;
@@ -352,6 +352,68 @@ export function bestUseOfTime(
   }
 
   return { block: best.block, minutes, partial: !fits, reason };
+}
+
+/* ------------------------------------------------------------------ *
+ * Finishing a session early (Phase 5D, Part 4/5)
+ * ------------------------------------------------------------------ */
+
+/** Below this, the variance is just clock noise, not a real early finish worth surfacing (Part 18). */
+export const EARLY_FINISH_MIN_MINUTES = 5;
+
+export interface EarlyFinishSummary {
+  freedMinutes: number;
+  headline: string;
+  detail: string;
+  /** A real placed session the freed time could go toward — never invented (Part 4: "never invent busywork"). */
+  suggestion: TimeSuggestion | null;
+}
+
+/**
+ * What to say — and optionally offer — right after a session finishes early.
+ *
+ * This never schedules anything on its own. It only decides what to *say*, and, when a real
+ * already-placed session would genuinely fit the freed window, surfaces it as something the
+ * student can choose to start (via `bestUseOfTime`, the same function the "I have N minutes" card
+ * uses) — never something applied automatically.
+ */
+export function buildEarlyFinishSummary(
+  plannedMinutes: number | null,
+  actualMinutes: number,
+  result: GenerateScheduleResult,
+  workItems: SchedulableWorkItem[],
+  stages: WorkStage[],
+  now: string,
+  freeTimePriority: FreeTimePriority
+): EarlyFinishSummary | null {
+  if (plannedMinutes == null) return null;
+  const freed = plannedMinutes - actualMinutes;
+  if (freed < EARLY_FINISH_MIN_MINUTES) return null;
+
+  const headline = `Finished ${formatMinutesAsHoursMinutes(freed)} early.`;
+
+  // A student who is caught up, or who has said protecting free time matters most, gets that
+  // respected outright — the freed time is never treated as a gap to fill (Part 4/5).
+  if (result.caughtUp || freeTimePriority === "high") {
+    return { freedMinutes: freed, headline, detail: "You're on track. Keep the time free.", suggestion: null };
+  }
+
+  const suggestion = bestUseOfTime(freed, result, workItems, stages, now);
+  if (!suggestion) {
+    return {
+      freedMinutes: freed,
+      headline,
+      detail: `You've freed up ${formatMinutesAsHoursMinutes(freed)}. Nothing else fits this window right now — keep it free.`,
+      suggestion: null,
+    };
+  }
+
+  const behind = result.workloadStatus.level === "at-risk" || result.workloadStatus.level === "getting-tight";
+  const detail = behind
+    ? `Your schedule has ${formatMinutesAsHoursMinutes(freed)} extra — "${suggestion.block.title}" can use this window.`
+    : `You have another ${formatMinutesAsHoursMinutes(freed)} window — "${suggestion.block.title}" fits here.`;
+
+  return { freedMinutes: freed, headline, detail, suggestion };
 }
 
 /** Resolves a block's `workItemId`, which for decomposed work is a stage id, back to its item. */
