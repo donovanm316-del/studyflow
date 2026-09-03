@@ -12,7 +12,9 @@ import { ScheduleChangeNotice } from "@/components/schedule/ScheduleChangeNotice
 import { formatSyncRecency } from "@/lib/data/classroom-sync";
 import { useAppData } from "@/lib/data/store";
 import { classroomErrorMessage, type ClassroomConnectionStatus, type ClassroomErrorCode } from "@/lib/integrations/google-classroom";
-import type { ScheduleChangeSummary } from "@/scheduling-engine";
+import { formatDueLabel } from "@/lib/schedule-format";
+import { todayDateOnly } from "@/lib/now";
+import { formatMinutesAsHoursMinutes, type ScheduleChangeSummary } from "@/scheduling-engine";
 
 /**
  * The Google Classroom connection, in Settings.
@@ -40,11 +42,31 @@ interface ApiError {
 /** Codes that mean the *authorization* itself is gone, not a transient failure — see Part 9. */
 const RECONNECT_CODES: ClassroomErrorCode[] = ["session-expired", "permission-denied"];
 
-/** Reports what actually happened, with both halves named — never a vague "sync complete". */
-function summarizeSync(imported: number, updated: number): string {
+/**
+ * Reports what actually happened, with both halves named — never a vague "sync complete".
+ *
+ * For a handful of new items, names each one with its real due date and estimate (Phase 6B,
+ * Part 9) — exactly what Classroom said and nothing StudyFlow guessed. Falls back to a plain count
+ * once there are more than a few, where naming each would stop being "concise" (Part 14).
+ */
+function summarizeSync(
+  imported: number,
+  updated: number,
+  importedItems: { title: string; dueDate: string; estimatedMinutes: number }[],
+  today: string
+): string {
   if (imported === 0 && updated === 0) return "Nothing was imported or changed.";
   const parts: string[] = [];
-  if (imported > 0) parts.push(`Imported ${imported} assignment${imported === 1 ? "" : "s"}`);
+  if (imported > 0) {
+    if (importedItems.length > 0 && importedItems.length <= 3) {
+      const named = importedItems
+        .map((i) => `${i.title} (${formatDueLabel(i.dueDate, today)}, ${formatMinutesAsHoursMinutes(i.estimatedMinutes)})`)
+        .join("; ");
+      parts.push(`Imported ${imported} assignment${imported === 1 ? "" : "s"}: ${named}`);
+    } else {
+      parts.push(`Imported ${imported} assignment${imported === 1 ? "" : "s"}`);
+    }
+  }
   if (updated > 0) parts.push(`updated ${updated} from Classroom`);
   return `${parts.join(" and ")}.`;
 }
@@ -105,7 +127,7 @@ export function GoogleClassroomCard() {
       setNotice("Google Classroom connected.");
       setNeedsReconnect(false);
       // Straight into "pick your classes and sync" (Phase 6A, Part 4) — a student who just
-      // finished the Google consent screen shouldn't have to notice and click "Sync now"
+      // finished the Google consent screen shouldn't have to notice and click "Sync Google Classroom"
       // themselves to get to the next real step. Nothing is imported until they confirm inside it.
       setSyncOpen(true);
     } else {
@@ -257,7 +279,7 @@ export function GoogleClassroomCard() {
           ) : status.connected ? (
             <>
               <Button size="sm" onClick={() => setSyncOpen(true)} disabled={busy !== null}>
-                Sync now
+                Sync Google Classroom
               </Button>
               <Button size="sm" variant="secondary" onClick={checkConnection} disabled={busy !== null}>
                 {busy === "checking" ? "Checking…" : "Check connection"}
@@ -278,10 +300,10 @@ export function GoogleClassroomCard() {
         <ClassroomSyncModal
           open
           onClose={() => setSyncOpen(false)}
-          onApplied={({ imported, updated, changes }) => {
+          onApplied={({ imported, updated, changes, importedItems: newlyImported }) => {
             setError(null);
             setScheduleChanges(changes);
-            setNotice(summarizeSync(imported, updated));
+            setNotice(summarizeSync(imported, updated, newlyImported, todayDateOnly()));
           }}
           onAuthError={(code) => {
             if (RECONNECT_CODES.includes(code)) setNeedsReconnect(true);
@@ -385,10 +407,30 @@ function ConnectedState({
 }) {
   return (
     <div className="text-xs text-ink-muted">
-      <p className="mb-2">
-        StudyFlow reads your classes and coursework. It never changes anything in Google Classroom, and it only imports
-        what you choose during a sync.
-      </p>
+      {/* Explicit can/cannot bullets, immediately visible rather than behind a click (Phase 6B,
+          Part 10) — the collapsed `ClassroomExplainer` below adds the connect walkthrough for a
+          first-time user; this is the always-visible summary for one who's already connected. */}
+      <p className="mb-2">StudyFlow can read your enrolled classes and coursework to help build your schedule.</p>
+      <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <p className="mb-1 font-medium text-ink">StudyFlow can</p>
+          <ul className="list-disc pl-4 text-ink-faint">
+            <li>Read your classes</li>
+            <li>Read your assignments</li>
+            <li>Read due dates</li>
+            <li>Import coursework into StudyFlow</li>
+          </ul>
+        </div>
+        <div>
+          <p className="mb-1 font-medium text-ink">StudyFlow cannot</p>
+          <ul className="list-disc pl-4 text-ink-faint">
+            <li>Change Classroom assignments</li>
+            <li>Submit work</li>
+            <li>Comment</li>
+            <li>Change grades</li>
+          </ul>
+        </div>
+      </div>
       <dl className="flex flex-col gap-1 text-ink-faint">
         <div className="flex flex-wrap items-center gap-2">
           <dt>Syncing</dt>

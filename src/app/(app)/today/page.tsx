@@ -15,14 +15,22 @@ import { blockCardKind, formatTimeRange, resolveWorkItemForBlock } from "@/lib/s
 import { currentWeekRange, todayDateOnly } from "@/lib/now";
 import { nowLocalIso } from "@/lib/now";
 import { useLiveNow } from "@/lib/useLiveNow";
-import { detectStaleness } from "@/lib/schedule-freshness";
+import { deriveScheduleState, detectStaleness } from "@/lib/schedule-freshness";
 import { getNextBestAction } from "@/lib/next-best-action";
-import { bestUseOfTime, buildEarlyFinishSummary, previewMove, type MovePreview, type TimeSuggestion } from "@/lib/decision-support";
+import {
+  bestUseOfTime,
+  buildEarlyFinishSummary,
+  buildOverrunImpact,
+  previewMove,
+  type MovePreview,
+  type TimeSuggestion,
+} from "@/lib/decision-support";
 import {
   diffSchedules,
   formatMinutesAsHoursMinutes,
   minutesOfDay,
   subtractIntervals,
+  type GenerateScheduleResult,
   type ScheduleChangeSummary,
   type TimeWindow,
 } from "@/scheduling-engine";
@@ -83,6 +91,10 @@ export default function TodayPage() {
   /** The session just finished, so "✓ done — next up: …" and estimate-vs-actual can be shown
    *  without the student navigating away (Phase 4, Part 14; Phase 4.5C, Part 1). */
   const [justCompleted, setJustCompleted] = useState<{ title: string; actual: number; planned: number | null } | null>(null);
+  // Snapshot of the schedule immediately before the just-finished session was recorded, held only
+  // long enough to detect whether running long actually pushed something else out (Phase 6B,
+  // Part 6) — the same "before" idea `diffBaseline` already uses for other actions on this page.
+  const [preCompletionResult, setPreCompletionResult] = useState<GenerateScheduleResult | null>(null);
   const [replanNotice, setReplanNotice] = useState<string | null>(null);
   const [expandedWhyId, setExpandedWhyId] = useState<string | null>(null);
   // Captures the schedule right before a replanning action; once the store update lands and
@@ -206,6 +218,8 @@ export default function TodayPage() {
     if (!completion || completion.stage !== "feeling") return;
     const finishedTitle =
       completion.source.kind === "block" ? completion.source.block.title : activeSession?.workItemTitle ?? "that session";
+    // Captured before the store mutates — `result` here is still the pre-completion schedule.
+    setPreCompletionResult(result);
     if (completion.source.kind === "block") {
       completeBlock(completion.source.block, completion.minutes, estimateFeedback);
     } else {
@@ -241,6 +255,26 @@ export default function TodayPage() {
       planningProfile.freeTimePriority
     );
   }, [justCompleted, result, workItems, stages, planningProfile.freeTimePriority]);
+
+  // The opposite case (Phase 6B, Part 6): did running long actually push something else out of
+  // today's plan? Compares the schedule from right before this completion against the one after —
+  // silent unless a real, later-today item genuinely got worse off.
+  const overrunImpact = useMemo(() => {
+    if (!justCompleted || !preCompletionResult) return null;
+    return buildOverrunImpact(justCompleted.planned, justCompleted.actual, preCompletionResult, result, today);
+  }, [justCompleted, preCompletionResult, result, today]);
+
+  // "What's happening with today's plan right now?" (Part 1) — feeds only the Next Up card's
+  // framing (calm vs. urgent); every value here already exists elsewhere on this page.
+  const scheduleState = useMemo(
+    () =>
+      deriveScheduleState(
+        staleness,
+        result,
+        nextAction.kind === "scheduled" ? (nextAction.buffer?.capacity.risk ?? null) : null
+      ),
+    [staleness, result, nextAction]
+  );
 
   return (
     <div>
@@ -346,10 +380,29 @@ export default function TodayPage() {
                   Planned: {justCompleted.planned} min · Actual: {justCompleted.actual} min
                 </p>
                 <p className="mt-0.5">
-                  You finished {Math.abs(justCompleted.planned - justCompleted.actual)} minutes{" "}
-                  {justCompleted.actual < justCompleted.planned ? "faster" : "slower"} than expected. We&apos;ll use this
-                  to make future plans more accurate.
+                  {justCompleted.actual < justCompleted.planned
+                    ? `You finished ${justCompleted.planned - justCompleted.actual} minutes faster than expected.`
+                    : `This took ${justCompleted.actual - justCompleted.planned} minutes longer than expected.`}{" "}
+                  We&apos;ll use this to make future plans more accurate.
                 </p>
+              </div>
+            )}
+            {overrunImpact && (
+              <div className="mt-2 rounded-md border border-warning-soft bg-surface px-3 py-2">
+                <p className="text-xs font-medium text-warning">{overrunImpact.headline}</p>
+                <p className="mt-0.5 text-xs text-ink-muted">{overrunImpact.detail}</p>
+                <div className="mt-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      adjustSchedule();
+                      setJustCompleted(null);
+                    }}
+                  >
+                    Replan today
+                  </Button>
+                </div>
               </div>
             )}
             {earlyFinish && (
@@ -414,6 +467,7 @@ export default function TodayPage() {
                   ? "Google Classroom"
                   : undefined
               }
+              state={scheduleState}
             />
           </div>
         )}

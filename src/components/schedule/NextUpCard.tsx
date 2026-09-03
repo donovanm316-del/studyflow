@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { formatMinutesAsHoursMinutes } from "@/scheduling-engine";
 import type { NextBestAction } from "@/lib/next-best-action";
+import type { ScheduleState } from "@/lib/schedule-freshness";
 
 export interface NextUpCardProps {
   action: NextBestAction;
@@ -18,6 +19,12 @@ export interface NextUpCardProps {
    * next block the same way regardless of source, and this label never influences that choice.
    */
   sourceLabel?: string;
+  /**
+   * What's happening with today's plan right now (Phase 6B, Part 1/12) — changes only the header's
+   * framing (calm vs. urgent), never which item is recommended. Omitted entirely defaults to the
+   * calm framing, so existing callers that don't pass it are unaffected.
+   */
+  state?: ScheduleState;
 }
 
 /**
@@ -25,8 +32,11 @@ export interface NextUpCardProps {
  * Part 22; upgraded in Phase 4.5B, Part 1/2). Presentation-only: the caller decides what "Start"
  * does and whether it's currently allowed.
  */
-export function NextUpCard({ action, onStart, startDisabled, compact, sourceLabel }: NextUpCardProps) {
+export function NextUpCard({ action, onStart, startDisabled, compact, sourceLabel, state }: NextUpCardProps) {
   const [showWhy, setShowWhy] = useState(false);
+  // "Your next move" reads as more urgent than "Next up" — reserved for when that's actually true
+  // (Part 12), never a style choice independent of the real schedule state.
+  const urgent = state === "behind" || state === "at-risk";
 
   if (action.kind === "current-session") return null;
 
@@ -46,7 +56,9 @@ export function NextUpCard({ action, onStart, startDisabled, compact, sourceLabe
 
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Your next move</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
+        {urgent ? "Your next move" : "Next up"}
+      </p>
 
       <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">

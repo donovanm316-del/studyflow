@@ -57,7 +57,14 @@ export interface ClassroomSyncModalProps {
   open: boolean;
   onClose: () => void;
   /** Told what actually happened, so Settings can show an honest summary after the modal closes. */
-  onApplied: (summary: { imported: number; updated: number; changes: ScheduleChangeSummary }) => void;
+  onApplied: (summary: {
+    imported: number;
+    updated: number;
+    changes: ScheduleChangeSummary;
+    /** The newly imported items themselves — title/deadline/estimate, for naming what changed and
+     *  why (Phase 6B, Part 9), not just how many. Never anything Classroom didn't actually say. */
+    importedItems: { title: string; dueDate: string; estimatedMinutes: number }[];
+  }) => void;
   /**
    * Told when a fetch failed because Google no longer honors the connection — as opposed to a
    * transient network or server problem — so Settings can switch to its persistent "Reconnect"
@@ -155,7 +162,12 @@ export function ClassroomSyncModal({ open, onClose, onApplied, onAuthError }: Cl
   function apply() {
     const changes = previewSyncImpact(scheduleInput, imports, updates);
     applyClassroomSync({ imports, updates, syncedAt: new Date().toISOString() });
-    onApplied({ imported: imports.length, updated: updates.length, changes });
+    onApplied({
+      imported: imports.length,
+      updated: updates.length,
+      changes,
+      importedItems: imports.map((i) => ({ title: i.title, dueDate: i.dueDate, estimatedMinutes: i.estimatedMinutes })),
+    });
     onClose();
   }
 

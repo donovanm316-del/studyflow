@@ -22,9 +22,7 @@ import {
   type GenerateScheduleResult,
   type SchedulableWorkItem,
 } from "@/scheduling-engine";
-import { buildDayHealth, summarizeWeek } from "@/lib/decision-support";
-
-const RISK_SEVERITY: Record<DeadlineRiskLevel, number> = { comfortable: 0, tight: 1, "at-risk": 2, overdue: 3 };
+import { buildDayHealth, RISK_SEVERITY, summarizeWeek } from "@/lib/decision-support";
 
 function worseRisk(a: DeadlineRiskLevel, b: DeadlineRiskLevel): DeadlineRiskLevel {
   return RISK_SEVERITY[b] > RISK_SEVERITY[a] ? b : a;

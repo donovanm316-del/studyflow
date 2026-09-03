@@ -3,6 +3,7 @@ import {
   bestUseOfTime,
   buildDayHealth,
   buildEarlyFinishSummary,
+  buildOverrunImpact,
   buildWhyNow,
   freeMinutesToday,
   previewMove,
@@ -519,6 +520,35 @@ describe("Phase 5D, Scenarios B/C/D — finishing a session early", () => {
     expect(summary?.detail).toContain("History reading");
   });
 
+  it("names the deadline-protection reason when the suggested item's own capacity is genuinely tight", () => {
+    // A single, narrow day so the suggested item's own deadline capacity is genuinely tight, not
+    // just the week-level workload — 27 available minutes against 25 needed is inside
+    // DEADLINE_COMFORT_FACTOR (1.15x), i.e. "tight" rather than "comfortable".
+    const narrowProfile = makePlanningProfile({
+      dailyAvailability: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, earliest: "15:00", latest: "15:27" })),
+    });
+    const urgent = makeAssignment({
+      title: "Urgent reading",
+      dueDate: "2026-08-24T15:27",
+      estimatedMinutes: 25,
+      deadlineStrictness: "hard",
+    });
+    // Not caught up — otherwise buildEarlyFinishSummary short-circuits to "keep it free" before
+    // ever reaching the suggestion branch this test exercises.
+    const overflow = makeAssignment({
+      title: "Overflow work",
+      dueDate: "2026-08-24T23:59",
+      estimatedMinutes: 300,
+      deadlineStrictness: "flexible",
+    });
+    const result = generateSchedule(
+      buildInput([urgent, overflow], { rangeStart: "2026-08-24", rangeEnd: "2026-08-24" }, narrowProfile)
+    );
+    const summary = buildEarlyFinishSummary(60, 35, result, [urgent, overflow], [], NOW, "medium");
+    expect(summary?.suggestion?.block.workItemId).toBe(urgent.id);
+    expect(summary?.detail).toMatch(/helps protect its deadline/);
+  });
+
   it("never invents work when nothing real fits the freed window", () => {
     // A single large, unsplittable, already-placed item overflows a single day (not caught up),
     // but its own session chunks are far bigger than a tiny 15-minute freed window — nothing fits.
@@ -535,5 +565,82 @@ describe("Phase 5D, Scenarios B/C/D — finishing a session early", () => {
     const summary = buildEarlyFinishSummary(20, 5, result, [big], [], NOW, "medium");
     expect(summary?.suggestion).toBeNull();
     expect(summary?.detail).toMatch(/nothing else fits/i);
+  });
+});
+
+describe("Phase 6B, Part 6 — buildOverrunImpact (taking longer than planned)", () => {
+  // A deliberately narrow single day so a real overrun genuinely squeezes what's left.
+  const narrowProfile = makePlanningProfile({
+    dailyAvailability: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, earliest: "15:00", latest: "16:00" })),
+  });
+
+  it("says nothing for a trivial overrun (Part 8: no noise)", () => {
+    const a = makeAssignment({ title: "First task", dueDate: "2026-08-24T23:59", estimatedMinutes: 30 });
+    const b = makeAssignment({ title: "Second task", dueDate: "2026-08-24T16:00", estimatedMinutes: 30, deadlineStrictness: "hard" });
+    const before = generateSchedule(
+      buildInput([a, b], { rangeStart: "2026-08-24", rangeEnd: "2026-08-24", now: "2026-08-24T14:00" }, narrowProfile)
+    );
+    const after = generateSchedule(
+      buildInput(
+        [{ ...a, status: "completed", actualMinutes: 32 }, b],
+        { rangeStart: "2026-08-24", rangeEnd: "2026-08-24", now: "2026-08-24T15:32" },
+        narrowProfile
+      )
+    );
+    expect(buildOverrunImpact(30, 32, before, after, "2026-08-24")).toBeNull();
+  });
+
+  it("returns null when there was no planned duration to compare against", () => {
+    const result = generateSchedule(buildInput([]));
+    expect(buildOverrunImpact(null, 40, result, result, "2026-08-24")).toBeNull();
+  });
+
+  it("names the later-today item that genuinely no longer fits comfortably", () => {
+    const a = makeAssignment({ title: "First task", dueDate: "2026-08-24T23:59", estimatedMinutes: 30 });
+    const b = makeAssignment({ title: "Second task", dueDate: "2026-08-24T16:00", estimatedMinutes: 30, deadlineStrictness: "hard" });
+
+    // Before: planned from 14:00, the full 15:00-16:00 hour is available — B fits comfortably
+    // right after A.
+    const before = generateSchedule(
+      buildInput([a, b], { rangeStart: "2026-08-24", rangeEnd: "2026-08-24", now: "2026-08-24T14:00" }, narrowProfile)
+    );
+    // After: A ran 20 minutes over (50 instead of 30) and is now complete; by the time it's
+    // logged, "now" is 15:50 — only 10 of B's needed 30 minutes remain before its 16:00 deadline.
+    const after = generateSchedule(
+      buildInput(
+        [{ ...a, status: "completed", actualMinutes: 50 }, b],
+        { rangeStart: "2026-08-24", rangeEnd: "2026-08-24", now: "2026-08-24T15:50" },
+        narrowProfile
+      )
+    );
+
+    const impact = buildOverrunImpact(30, 50, before, after, "2026-08-24");
+    expect(impact).not.toBeNull();
+    expect(impact?.overrunMinutes).toBe(20);
+    expect(impact?.headline).toMatch(/20m longer than planned/);
+    expect(impact?.detail).toContain("Second task");
+    expect(impact?.affectedWorkItemId).toBe(b.id);
+  });
+
+  it("says nothing when the later item still fits comfortably despite the overrun", () => {
+    // A generous day — running a bit over on A still leaves plenty of room for B.
+    const roomyProfile = makePlanningProfile({
+      dailyAvailability: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, earliest: "10:00", latest: "20:00" })),
+    });
+    const a = makeAssignment({ title: "First task", dueDate: "2026-08-24T23:59", estimatedMinutes: 30 });
+    const b = makeAssignment({ title: "Second task", dueDate: "2026-08-25T23:59", estimatedMinutes: 30, deadlineStrictness: "hard" });
+
+    const before = generateSchedule(
+      buildInput([a, b], { rangeStart: "2026-08-24", rangeEnd: "2026-08-25", now: "2026-08-24T10:00" }, roomyProfile)
+    );
+    const after = generateSchedule(
+      buildInput(
+        [{ ...a, status: "completed", actualMinutes: 60 }, b],
+        { rangeStart: "2026-08-24", rangeEnd: "2026-08-25", now: "2026-08-24T11:00" },
+        roomyProfile
+      )
+    );
+
+    expect(buildOverrunImpact(30, 60, before, after, "2026-08-24")).toBeNull();
   });
 });

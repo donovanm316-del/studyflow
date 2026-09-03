@@ -270,6 +270,22 @@ describe("schedule impact preview", () => {
     expect(changes.changes.some((c) => c.kind === "moved")).toBe(true);
   });
 
+  it("does not reshuffle an existing item's placement just because a new one was imported (Phase 6B, Part 9)", () => {
+    // Plenty of capacity for both — the existing item should stay right where it already was;
+    // only the newly-imported item shows up as "added".
+    const existing = importedFrom(coursework({ externalId: "cw-existing", dueDate: "2026-08-28T23:59" }), { estimatedMinutes: 45 });
+    const roomy = { ...scheduleInput, workItems: [existing] };
+    const newItem = normalizeExternalItem(
+      coursework({ externalId: "cw-new", title: "New homework", dueDate: "2026-08-28T23:59" }),
+      TODAY,
+      { estimatedMinutes: 30 }
+    )!;
+
+    const changes = previewSyncImpact(roomy, [newItem], []);
+    expect(changes.changes.some((c) => c.workItemId === existing.id)).toBe(false);
+    expect(changes.changes.some((c) => c.title.includes("New homework") && c.kind === "added")).toBe(true);
+  });
+
   it("leaves the caller's inputs untouched — the preview is run on a throwaway copy", () => {
     const existing = importedFrom(coursework());
     const withItem = { ...scheduleInput, workItems: [existing] };

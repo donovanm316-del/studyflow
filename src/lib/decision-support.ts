@@ -28,6 +28,13 @@ import type { FreeTimePriority, ScheduleBlock, WorkStage } from "@/types/models"
 /** Minimum minutes of work below which a "best time to start" recommendation isn't worth showing. */
 export const START_RECOMMENDATION_MIN_MINUTES = 120;
 
+/**
+ * How much worse one `DeadlineRiskLevel` is than another. The single definition — `classroom-insights.ts`
+ * used to keep its own identical copy; that was found and consolidated here during Phase 6B rather
+ * than left as a second copy of the same ranking (Part 16).
+ */
+export const RISK_SEVERITY: Record<DeadlineCapacity["risk"], number> = { comfortable: 0, tight: 1, "at-risk": 2, overdue: 3 };
+
 /* ------------------------------------------------------------------ *
  * Buffer, in language a student can act on (Part 3 / Part 4)
  * ------------------------------------------------------------------ */
@@ -409,11 +416,87 @@ export function buildEarlyFinishSummary(
   }
 
   const behind = result.workloadStatus.level === "at-risk" || result.workloadStatus.level === "getting-tight";
-  const detail = behind
-    ? `Your schedule has ${formatMinutesAsHoursMinutes(freed)} extra — "${suggestion.block.title}" can use this window.`
-    : `You have another ${formatMinutesAsHoursMinutes(freed)} window — "${suggestion.block.title}" fits here.`;
+  // Naming *why* this particular item is the useful one — its own deadline is genuinely tight —
+  // rather than just "it fits", when that's actually true (Phase 6B, Part 4/14).
+  const suggestionCapacity = suggestion.block.workItemId ? result.deadlineCapacities[suggestion.block.workItemId] : undefined;
+  const protectsDeadline = suggestionCapacity?.risk === "tight" || suggestionCapacity?.risk === "at-risk";
+  const detail =
+    (behind
+      ? `Your schedule has ${formatMinutesAsHoursMinutes(freed)} extra — "${suggestion.block.title}" can use this window.`
+      : `You have another ${formatMinutesAsHoursMinutes(freed)} window — "${suggestion.block.title}" fits here.`) +
+    (protectsDeadline ? " This helps protect its deadline." : "");
 
   return { freedMinutes: freed, headline, detail, suggestion };
+}
+
+/* ------------------------------------------------------------------ *
+ * Taking longer than planned (Phase 6B, Part 6)
+ * ------------------------------------------------------------------ */
+
+export interface OverrunImpact {
+  overrunMinutes: number;
+  headline: string;
+  /** Names the specific later-today item genuinely affected — never a vague "your schedule". */
+  detail: string;
+  affectedWorkItemId: string;
+}
+
+/** Same noise floor as the early-finish case — a few minutes over is not worth a banner. */
+export const OVERRUN_MIN_MINUTES = 5;
+
+/**
+ * "Did running long actually cause a problem?" — not "did it take longer than planned", which by
+ * itself is unremarkable and would fire constantly (Part 8: no banner for every minor variance).
+ *
+ * Compares the deadline-capacity risk of every item that still had a later-today session *before*
+ * this completion against the same item's risk *after* — using the schedule the store already
+ * recomputed from real state, not a second calculation. A genuine problem is either the risk
+ * getting worse (comfortable → tight, tight → at-risk, ...) or the item no longer having a session
+ * today at all where it did before. Anything short of that is silence, not a manufactured warning.
+ */
+export function buildOverrunImpact(
+  plannedMinutes: number | null,
+  actualMinutes: number,
+  before: GenerateScheduleResult,
+  after: GenerateScheduleResult,
+  today: string
+): OverrunImpact | null {
+  if (plannedMinutes == null) return null;
+  const overrun = actualMinutes - plannedMinutes;
+  if (overrun < OVERRUN_MIN_MINUTES) return null;
+
+  const laterTodayBefore = before.blocks.filter(
+    (b) => b.workItemId && b.status === "planned" && (b.origin === "generated" || b.origin === "manual-override") && toDateOnly(b.start) === today
+  );
+  const scheduledTodayAfter = new Set(
+    after.blocks
+      .filter((b) => b.workItemId && b.status === "planned" && toDateOnly(b.start) === today)
+      .map((b) => b.workItemId!)
+  );
+
+  const headline = `This took ${formatMinutesAsHoursMinutes(overrun)} longer than planned.`;
+
+  for (const block of laterTodayBefore) {
+    const id = block.workItemId!;
+    const beforeCap = before.deadlineCapacities[id];
+    const afterCap = after.deadlineCapacities[id];
+    if (!beforeCap) continue;
+
+    const droppedFromToday = !scheduledTodayAfter.has(id);
+    const worsened = !!afterCap && RISK_SEVERITY[afterCap.risk] > RISK_SEVERITY[beforeCap.risk];
+    // A deadline that was already overdue can't meaningfully get "worse" by this measure, and
+    // dropping an already-comfortable item from today isn't a problem worth a banner over.
+    if (worsened || (droppedFromToday && beforeCap.risk !== "overdue" && beforeCap.risk !== "comfortable")) {
+      return {
+        overrunMinutes: overrun,
+        headline,
+        detail: `Your "${block.title}" session may no longer fit comfortably before its deadline.`,
+        affectedWorkItemId: id,
+      };
+    }
+  }
+
+  return null;
 }
 
 /** Resolves a block's `workItemId`, which for decomposed work is a stage id, back to its item. */
