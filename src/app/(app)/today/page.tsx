@@ -28,13 +28,14 @@ import {
 } from "@/scheduling-engine";
 import type { ScheduleBlock, WorkSession } from "@/types/models";
 
+type CompletionSource = { kind: "block"; block: ScheduleBlock } | { kind: "adhoc" };
 type CompletionStep =
-  | { stage: "minutes"; source: { kind: "block"; block: ScheduleBlock } | { kind: "adhoc" }; minutes: number }
-  | {
-      stage: "feeling";
-      source: { kind: "block"; block: ScheduleBlock } | { kind: "adhoc" };
-      minutes: number;
-    };
+  // `minutesInput` is a string, not a number (Phase 6A, Part 5/6) — the same fix as the estimate
+  // field: a controlled numeric input snaps back to a literal "0" the instant it's cleared, which
+  // is exactly the friction this field must not have while a student is typing over the pre-filled
+  // guess. `plannedMinutes` rides along so the panel can show "Planned: Xm" for context.
+  | { stage: "minutes"; source: CompletionSource; minutesInput: string; plannedMinutes: number | null }
+  | { stage: "feeling"; source: CompletionSource; minutes: number; plannedMinutes: number | null };
 
 /** Only ever called from event handlers or effect callbacks, never during render — see the
  *  `liveElapsedMinutes` state below, which is what render actually reads. */
@@ -190,23 +191,21 @@ export default function TodayPage() {
     setPreviews(null);
   }
 
-  function beginFinish(source: CompletionStep["source"], defaultMinutes: number) {
-    setCompletion({ stage: "minutes", source, minutes: defaultMinutes });
+  function beginFinish(source: CompletionSource, defaultMinutes: number, plannedForDisplay: number | null) {
+    setCompletion({ stage: "minutes", source, minutesInput: String(defaultMinutes), plannedMinutes: plannedForDisplay });
   }
 
   function confirmMinutes() {
-    if (!completion) return;
-    setCompletion({ ...completion, stage: "feeling" });
+    if (!completion || completion.stage !== "minutes") return;
+    const minutes = Number(completion.minutesInput);
+    if (!Number.isFinite(minutes) || minutes <= 0) return;
+    setCompletion({ stage: "feeling", source: completion.source, minutes, plannedMinutes: completion.plannedMinutes });
   }
 
   function finalizeCompletion(estimateFeedback?: WorkSession["estimateFeedback"]) {
-    if (!completion) return;
+    if (!completion || completion.stage !== "feeling") return;
     const finishedTitle =
       completion.source.kind === "block" ? completion.source.block.title : activeSession?.workItemTitle ?? "that session";
-    const plannedForSession =
-      completion.source.kind === "block"
-        ? plannedMinutes(completion.source.block)
-        : activeSession?.plannedMinutes ?? null;
     if (completion.source.kind === "block") {
       completeBlock(completion.source.block, completion.minutes, estimateFeedback);
     } else {
@@ -215,7 +214,7 @@ export default function TodayPage() {
     setCompletion(null);
     // Surface what's next immediately rather than making the student go looking (Part 14). The
     // actual recommendation is read from the recomputed schedule on the next render, below.
-    setJustCompleted({ title: finishedTitle, actual: completion.minutes, planned: plannedForSession });
+    setJustCompleted({ title: finishedTitle, actual: completion.minutes, planned: completion.plannedMinutes });
   }
 
   const workAhead = result.workAheadSuggestions.filter((s) => s.type === "work-ahead");
@@ -318,9 +317,11 @@ export default function TodayPage() {
               size="sm"
               onClick={() => {
                 const activeBlock = activeSession.blockId ? result.blocks.find((b) => b.id === activeSession.blockId) : undefined;
+                const planned = activeBlock ? plannedMinutes(activeBlock) : (activeSession.plannedMinutes ?? null);
                 beginFinish(
                   activeBlock ? { kind: "block", block: activeBlock } : { kind: "adhoc" },
-                  computeElapsedMinutes(activeSession.startedAt) || 1
+                  computeElapsedMinutes(activeSession.startedAt) || 1,
+                  planned
                 );
               }}
             >
@@ -340,10 +341,16 @@ export default function TodayPage() {
               <span aria-hidden>✓</span> &ldquo;{justCompleted.title}&rdquo; complete.
             </p>
             {justCompleted.planned != null && justCompleted.planned !== justCompleted.actual && (
-              <p className="mt-0.5 text-xs">
-                You took {justCompleted.actual} minutes against a {justCompleted.planned}-minute plan — recorded, and
-                it will inform future estimates for similar work.
-              </p>
+              <div className="mt-1 text-xs">
+                <p className="text-ink-muted">
+                  Planned: {justCompleted.planned} min · Actual: {justCompleted.actual} min
+                </p>
+                <p className="mt-0.5">
+                  You finished {Math.abs(justCompleted.planned - justCompleted.actual)} minutes{" "}
+                  {justCompleted.actual < justCompleted.planned ? "faster" : "slower"} than expected. We&apos;ll use this
+                  to make future plans more accurate.
+                </p>
+              </div>
             )}
             {earlyFinish && (
               <div className="mt-2 rounded-md border border-success-soft bg-surface px-3 py-2">
@@ -506,7 +513,11 @@ export default function TodayPage() {
                           <Button size="sm" disabled={!!activeSession} onClick={() => startSession(block)}>
                             Start
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => beginFinish({ kind: "block", block }, plannedMinutes(block))}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => beginFinish({ kind: "block", block }, plannedMinutes(block), plannedMinutes(block))}
+                          >
                             Log without timer
                           </Button>
                           <Button size="sm" variant="ghost" onClick={() => (isChoosing ? closeChooser() : openChooser(block))}>
@@ -566,18 +577,30 @@ export default function TodayPage() {
       </section>
 
       {completion?.stage === "minutes" && (
-        <div className="mt-4 flex flex-wrap items-end gap-3 rounded-lg border border-border bg-surface p-4">
-          <Input
-            label="Actual minutes spent"
-            type="number"
-            min={1}
-            value={completion.minutes}
-            onChange={(e) => setCompletion({ ...completion, minutes: Number(e.target.value) })}
-          />
-          <Button onClick={confirmMinutes} disabled={!completion.minutes || completion.minutes <= 0}>
-            Continue
-          </Button>
-          <Button variant="ghost" onClick={() => setCompletion(null)}>Cancel</Button>
+        <div className="mt-4 rounded-lg border border-border bg-surface p-4">
+          <p className="text-sm font-medium text-ink">
+            <span aria-hidden>✓</span> Nice — you finished this session.
+          </p>
+          <p className="mt-0.5 text-xs text-ink-muted">How long did it actually take?</p>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <Input
+              label="Actual time"
+              type="number"
+              min={1}
+              step={5}
+              placeholder="e.g. 45"
+              value={completion.minutesInput}
+              onChange={(e) => setCompletion({ ...completion, minutesInput: e.target.value })}
+              hint={completion.plannedMinutes != null ? `Planned: ${completion.plannedMinutes} min` : undefined}
+            />
+            <Button
+              onClick={confirmMinutes}
+              disabled={!completion.minutesInput.trim() || Number(completion.minutesInput) <= 0}
+            >
+              Continue
+            </Button>
+            <Button variant="ghost" onClick={() => setCompletion(null)}>Cancel</Button>
+          </div>
         </div>
       )}
 

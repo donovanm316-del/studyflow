@@ -32,7 +32,7 @@ export function MobileNav() {
   }, [open]);
 
   return (
-    <div className="border-b border-border bg-surface md:hidden">
+    <div className="border-b border-border bg-surface md:hidden [padding-top:env(safe-area-inset-top)]">
       <div className="flex h-14 items-center justify-between px-4">
         <Link href="/dashboard" className="flex items-center gap-2 text-sm font-semibold tracking-tight text-ink">
           <Logo className="h-6 w-6 rounded-md" />

@@ -162,7 +162,11 @@ function CommittedStageList({
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
-  const [editMinutes, setEditMinutes] = useState(0);
+  // String-backed (Phase 6A, Part 5) — a numeric controlled input snaps back to a literal "0" the
+  // instant it's cleared to retype, which is exactly the friction this field must not have.
+  const [editMinutesInput, setEditMinutesInput] = useState("");
+  const editMinutes = Number(editMinutesInput);
+  const editMinutesValid = editMinutesInput.trim() !== "" && Number.isFinite(editMinutes) && editMinutes > 0;
 
   return (
     <ul className="flex flex-col gap-1">
@@ -186,13 +190,14 @@ function CommittedStageList({
                 type="number"
                 min={5}
                 step={5}
-                value={editMinutes}
-                onChange={(e) => setEditMinutes(Number(e.target.value))}
+                placeholder="e.g. 20"
+                value={editMinutesInput}
+                onChange={(e) => setEditMinutesInput(e.target.value)}
                 className="h-8 w-20"
               />
               <Button
                 size="sm"
-                disabled={editMinutes <= 0}
+                disabled={!editMinutesValid}
                 onClick={() => {
                   onUpdateStage(stage.id, { title: editTitle.trim() || stage.title, estimatedMinutes: editMinutes });
                   setEditingId(null);
@@ -230,7 +235,7 @@ function CommittedStageList({
               onClick={() => {
                 setEditingId(stage.id);
                 setEditTitle(stage.title);
-                setEditMinutes(stage.estimatedMinutes);
+                setEditMinutesInput(String(stage.estimatedMinutes));
               }}
             >
               Edit
@@ -248,7 +253,11 @@ function CommittedStageList({
 function AddStageForm({ onAdd }: { onAdd: (title: string, minutes: number) => void }) {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
-  const [minutes, setMinutes] = useState(20);
+  // String-backed, starts empty (Phase 6A, Part 5) — same fix as every other estimate field, so a
+  // student can type a real number immediately instead of clearing a pre-filled one first.
+  const [minutesInput, setMinutesInput] = useState("");
+  const minutes = Number(minutesInput);
+  const minutesValid = minutesInput.trim() !== "" && Number.isFinite(minutes) && minutes > 0;
 
   if (!adding) {
     return (
@@ -266,19 +275,20 @@ function AddStageForm({ onAdd }: { onAdd: (title: string, minutes: number) => vo
         type="number"
         min={5}
         step={5}
-        value={minutes}
-        onChange={(e) => setMinutes(Number(e.target.value))}
+        placeholder="e.g. 20"
+        value={minutesInput}
+        onChange={(e) => setMinutesInput(e.target.value)}
         className="h-8 w-20"
       />
       <Button
         size="sm"
-        disabled={minutes <= 0}
+        disabled={!title.trim() || !minutesValid}
         onClick={() => {
           const trimmed = title.trim();
-          if (!trimmed) return;
+          if (!trimmed || !minutesValid) return;
           onAdd(trimmed, minutes);
           setTitle("");
-          setMinutes(20);
+          setMinutesInput("");
           setAdding(false);
         }}
       >

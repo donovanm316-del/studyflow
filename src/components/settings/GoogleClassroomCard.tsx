@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ClassroomSyncModal } from "@/components/settings/ClassroomSyncModal";
 import { ClassroomCourseManager } from "@/components/settings/ClassroomCourseManager";
+import { ClassroomExplainer } from "@/components/settings/ClassroomExplainer";
 import { ScheduleChangeNotice } from "@/components/schedule/ScheduleChangeNotice";
 import { formatSyncRecency } from "@/lib/data/classroom-sync";
 import { useAppData } from "@/lib/data/store";
@@ -103,6 +104,10 @@ export function GoogleClassroomCard() {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the redirect result from the URL, an external source
       setNotice("Google Classroom connected.");
       setNeedsReconnect(false);
+      // Straight into "pick your classes and sync" (Phase 6A, Part 4) — a student who just
+      // finished the Google consent screen shouldn't have to notice and click "Sync now"
+      // themselves to get to the next real step. Nothing is imported until they confirm inside it.
+      setSyncOpen(true);
     } else {
       const reason = params.get("reason");
       setError(classroomErrorMessage((reason as ClassroomErrorCode) ?? "unknown"));
@@ -203,6 +208,8 @@ export function GoogleClassroomCard() {
       ) : (
         <NotConnectedState />
       )}
+
+      {status?.configured && <ClassroomExplainer />}
 
       {status?.configured && (
         <p className="mt-2 text-xs text-ink-faint">
